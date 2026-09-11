@@ -1,6 +1,6 @@
-#include <iostream>
+#include "citius/Server.hpp"
 
 int main(){
-    std::cout << "Iniciando CitiusHTTP" << std::endl;
+    Server server{8080};
     return 0;
 }
