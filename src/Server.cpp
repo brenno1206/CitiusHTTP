@@ -5,6 +5,7 @@
 #include <stdexcept>    // Para lançar std::runtime_error
 #include <format>
 #include <iostream>
+#include <array>
 
 Server::Server(uint16_t port) {
     start(port);
@@ -38,6 +39,36 @@ void Server::start(uint16_t port) {
     }
 
     std::cout << std::format("Servidor escutando na porta {}...\n", port);
+}
 
+void Server::run(){
+    while(true) {
+        // Os 'nullptr' significam que, por enquanto, nao queremos saber o IP do cliente
+        int client_fd = accept(m_server_fd, nullptr, nullptr);
 
+        if(client_fd < 0) {
+            std::cerr <<  "Falhaao aceitar conexao.\n";
+            continue;
+        }
+
+        std::cout << "\n--- Novo Cliente Conectado! ---\n";
+        
+        // cria uma array de 4KB na stack
+        std::array<char, 4096> buffer{}; // o {} garante que ele seja preenchido com zeros
+
+        // recv pede: o socket do cliente, onde salvar os dados, o tamanho máximo, e flags
+        ssize_t bytes_lidos = recv(client_fd, buffer.data(), buffer.size(), 0);
+        
+        if (bytes_lidos > 0) {
+            std::cout << std::format("Requisicao recebiga:\n{}\n", buffer.data());
+        }
+
+        std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello Citius!";
+
+        // send pede: o socket do cliente, o ponteiro para os dados brutos da string, o tamanho, e flags
+        send(client_fd, response.c_str(), response.size(), 0);
+
+        close(client_fd);
+        std::cout << "Conexao encerrada.\n";
+    }
 }

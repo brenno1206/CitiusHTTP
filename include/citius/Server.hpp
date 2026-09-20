@@ -10,5 +10,5 @@ void start(uint16_t port);
 public:
     explicit Server(uint16_t port);
     ~Server();
-    
+    void run();
 };
