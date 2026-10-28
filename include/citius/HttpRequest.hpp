@@ -1,5 +1,8 @@
 #pragma once
 #include <string>
+
+namespace citius {
+
 enum class HttpMethod {
     GET,
     POST,
@@ -13,3 +16,5 @@ struct HttpRequest {
     std::string path;
     std::string version;
 };
+
+} // namespace citius

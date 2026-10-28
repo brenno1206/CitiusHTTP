@@ -2,13 +2,17 @@
 
 #include <cstdint>
 
+namespace citius {
+
 class Server {
 private:
 int m_server_fd = -1;  // SOCKET
-void start(uint16_t port);
+void start(std::uint16_t port);
 
 public:
-    explicit Server(uint16_t port);
+    explicit Server(std::uint16_t port);
     ~Server();
     void run();
 };
+
+} // namespace citius

@@ -1,4 +1,7 @@
 #include "citius/HttpParser.hpp"
+#include <cstddef>
+
+namespace citius {
 
 HttpMethod HttpParser::parse_method(std::string_view method_str) {
     if(method_str == "GET") return HttpMethod::GET;
@@ -10,7 +13,7 @@ HttpMethod HttpParser::parse_method(std::string_view method_str) {
 
 std::optional<HttpRequest> HttpParser::parse(std::string_view raw_request) {
     // encontra o fim da primeira linha
-    size_t first_line_end = raw_request.find("\r\n");
+    std::size_t first_line_end = raw_request.find("\r\n");
     if(first_line_end == std::string_view::npos){
         return std::nullopt;
     }
@@ -19,13 +22,13 @@ std::optional<HttpRequest> HttpParser::parse(std::string_view raw_request) {
     std::string_view request_line = raw_request.substr(0, first_line_end);
 
     // encontra o primeiro espaco (separa metodo do caminho)
-    size_t first_space = request_line.find(' ');
+    std::size_t first_space = request_line.find(' ');
     if(first_space == std::string_view::npos){
         return std::nullopt;
     }
 
     // encontra o segundo espaco (separa caminho da versao)
-    size_t second_space = request_line.find(' ', first_space + 1);
+    std::size_t second_space = request_line.find(' ', first_space + 1);
     if (second_space == std::string_view::npos) {
         return std::nullopt;
     }
@@ -47,3 +50,5 @@ std::optional<HttpRequest> HttpParser::parse(std::string_view raw_request) {
     request.version = std::string(version_str);
     return request;
 }
+
+} // namespace citius

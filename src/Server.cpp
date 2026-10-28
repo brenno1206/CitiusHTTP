@@ -6,8 +6,11 @@
 #include <format>
 #include <iostream>
 #include <array>
+#include <string>
 
-Server::Server(uint16_t port) {
+namespace citius {
+
+Server::Server(std::uint16_t port) {
     start(port);
 }
 Server::~Server() {
@@ -15,7 +18,7 @@ Server::~Server() {
         close(m_server_fd);
     }
 }
-void Server::start(uint16_t port) {
+void Server::start(std::uint16_t port) {
 
     m_server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -72,3 +75,5 @@ void Server::run(){
         std::cout << "Conexao encerrada.\n";
     }
 }
+
+} // namespace citius
