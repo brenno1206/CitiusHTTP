@@ -4,7 +4,7 @@ HttpMethod HttpParser::parse_method(std::string_view method_str) {
     if(method_str == "GET") return HttpMethod::GET;
     if(method_str == "POST") return HttpMethod::POST;
     if(method_str == "PUT") return HttpMethod::PUT;
-    if(method_str == "DELETE") return HttpMethod::GET;
+    if(method_str == "DELETE") return HttpMethod::DELETE;
     return HttpMethod::UNKNOWN;
 }
 
