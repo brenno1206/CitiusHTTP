@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(CitiusHTTP LANGUAGES CXX)
 
+# Sanitizers (ASan + UBSan): cmake -S . -B build-asan -DCITIUS_SANITIZE=ON
+option(CITIUS_SANITIZE "Compila com AddressSanitizer e UndefinedBehaviorSanitizer" OFF)
+
 # Biblioteca com quase todo o código (sem main), reaproveitada pelo servidor e pelos testes
 add_library(citius_core STATIC
     src/HttpParser.cpp
@@ -17,6 +20,11 @@ target_include_directories(citius_core PUBLIC include)
 
 # Habilitando os warnings do compilador para manter um código limpo
 target_compile_options(citius_core PRIVATE -Wall -Wextra -Wpedantic)
+if(CITIUS_SANITIZE)
+    # PUBLIC: quem linka a biblioteca tambem precisa linkar com o sanitizer
+    target_compile_options(citius_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(citius_core PUBLIC -fsanitize=address,undefined)
+endif()
 
 # Executavel fino: so o main, ligado a biblioteca
 add_executable(citius_server src/main.cpp)
