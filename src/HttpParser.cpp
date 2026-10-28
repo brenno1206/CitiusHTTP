@@ -18,23 +18,32 @@ std::optional<HttpRequest> HttpParser::parse(std::string_view raw_request) {
     // isola a primeira linha (ex: "GET / HTTP/1.1")
     std::string_view request_line = raw_request.substr(0, first_line_end);
 
-    // encontar o priemiro espaco (separa metodo do caminho)
-    size_t fisrt_space = request_line.find(' ');
-    if(fisrt_space == std::string_view::npos){
+    // encontra o primeiro espaco (separa metodo do caminho)
+    size_t first_space = request_line.find(' ');
+    if(first_space == std::string_view::npos){
         return std::nullopt;
     }
 
-    // encontrar o segund oespaco (separa caminho da versao)
-    size_t second_space = request_line.find(' ', fisrt_space + 1);
+    // encontra o segundo espaco (separa caminho da versao)
+    size_t second_space = request_line.find(' ', first_space + 1);
     if (second_space == std::string_view::npos) {
         return std::nullopt;
     }
     // extrai as 3 partes
-    std::string_view method_str = request_line.substr(0, fisrt_space);
-    std::string_view path_str = request_line.substr(fisrt_space + 1, second_space - (fisrt_space + 1));
-    std::string_view version_str = request_line.substr(second_space);
+    std::string_view method_str = request_line.substr(0, first_space);
+    std::string_view path_str = request_line.substr(first_space + 1, second_space - (first_space + 1));
+    std::string_view version_str = request_line.substr(second_space + 1);
 
-    // objeot final
+    // entrada do cliente e hostil: rejeita metodo desconhecido e partes vazias
+    HttpMethod method = parse_method(method_str);
+    if(method == HttpMethod::UNKNOWN || path_str.empty() || version_str.empty()){
+        return std::nullopt;
+    }
+
+    // objeto final
     HttpRequest request;
-
+    request.method = method;
+    request.path = std::string(path_str);
+    request.version = std::string(version_str);
+    return request;
 }
