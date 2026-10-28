@@ -2,7 +2,7 @@
 
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção. Hoje o servidor aceita uma conexão, lê a requisição, responde "Hello Citius!" e fecha. O parser HTTP está incompleto. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fase 0 concluída). Hoje o servidor aceita uma conexão, lê a requisição, responde "Hello Citius!" e fecha. O parser entende a linha de requisição (ainda sem cabeçalhos) e tem testes unitários. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -218,10 +218,18 @@ curl -v http://localhost:8080/          # -v mostra a requisição e a resposta
 
 Ou abra `http://localhost:8080` no navegador. Para parar o servidor: `Ctrl+C`.
 
-Quando os testes existirem (Fase 1+):
+Testes (GoogleTest, baixado automaticamente pelo CMake):
 
 ```bash
 ctest --test-dir build --output-on-failure
+```
+
+Com sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer):
+
+```bash
+cmake -S . -B build-asan -DCITIUS_SANITIZE=ON
+cmake --build build-asan
+ctest --test-dir build-asan --output-on-failure
 ```
 
 ---
@@ -232,7 +240,7 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 
 | Fase | Objetivo | Conceitos que você aprende |
 |---|---|---|
-| **0. Base saudável** | Corrigir bugs do código atual, `CMakeLists` modernizado (biblioteca + executável), namespace, `.clang-format`, primeiro teste | CMake, namespaces, testes |
+| **0. Base saudável** ✅ | Corrigir bugs do código atual, `CMakeLists` modernizado (biblioteca + executável), namespace, `.clang-format`, primeiro teste | CMake, namespaces, testes |
 | **1. Núcleo de rede e parser** | Classe `Socket` RAII, `SO_REUSEADDR`, laço de leitura, parser completo da linha de requisição e cabeçalhos, `HttpResponse` com serialização | RAII, TCP como fluxo, `string_view`, parsing |
 | **2. Arquivos estáticos** | Servir `www/`, tipos MIME, 404, proteção contra path traversal, `Content-Length` correto | Sistema de arquivos (`std::filesystem`), segurança |
 | **3. Roteamento** | `Router` com handlers registráveis (`router.get("/ping", ...)`), 405 Method Not Allowed | `std::function`, design de API |

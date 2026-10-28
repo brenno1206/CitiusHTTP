@@ -19,7 +19,7 @@ O dono do projeto é estudante de Ciência da Computação e **está aprendendo 
 ## Stack e plataforma
 
 - **Linguagem:** C++20 (`-std=c++20`, sem extensões GNU). Não usar recursos C++23 (ex.: `std::expected`).
-- **Build:** CMake (≥ 3.20 desejado; hoje o `CMakeLists.txt` declara 3.10 e precisa ser atualizado).
+- **Build:** CMake ≥ 3.20.
 - **Plataforma de desenvolvimento:** macOS com Apple Clang. O código deve continuar portável para Linux (gcc/clang); isole o que for específico de SO em `net/`.
 - **Rede:** sockets POSIX (`<sys/socket.h>`, `<netinet/in.h>`, `<unistd.h>`). IPv4 por enquanto.
 - **Dependências externas:** nenhuma no código de produção. Única exceção permitida: **GoogleTest** (via `FetchContent`) para testes. Pedir aprovação antes de adicionar qualquer outra.
@@ -31,8 +31,9 @@ cmake -S . -B build                          # configurar
 cmake --build build                          # compilar
 ./build/citius_server                        # executar (porta 8080)
 curl -v http://localhost:8080/               # teste manual
-ctest --test-dir build --output-on-failure   # testes (quando existirem)
-clang-format -i src/*.cpp include/citius/**/*.hpp   # formatar (quando houver .clang-format)
+ctest --test-dir build --output-on-failure   # testes
+cmake -S . -B build-asan -DCITIUS_SANITIZE=ON && cmake --build build-asan && ctest --test-dir build-asan --output-on-failure   # testes com ASan+UBSan
+clang-format -i src/*.cpp include/citius/**/*.hpp   # formatar
 ```
 
 `build/` é ignorado pelo git. Nunca commitar artefatos de build.
@@ -53,7 +54,7 @@ Estado atual: ainda é plano (`include/citius/*.hpp`, `src/*.cpp`). Migrar para 
 
 Regra de ouro: **`http/` nunca inclui headers de socket.** O parser recebe `std::string_view` e devolve estruturas; isso o torna testável sem rede.
 
-O CMake deve evoluir para: biblioteca `citius_core` + executável `citius_server` (só `main`) + executável de testes linkado à biblioteca. Usar apenas comandos por target (`target_*`), nunca flags globais.
+O CMake já tem: biblioteca `citius_core` + executável `citius_server` (só `main`) + executável `citius_tests` linkado à biblioteca. Usar apenas comandos por target (`target_*`), nunca flags globais.
 
 ## Convenções de código
 
@@ -63,7 +64,7 @@ Siga o estilo já existente no repositório:
 - Funções, métodos, variáveis: `snake_case`. Membros privados: prefixo `m_` (`m_server_fd`).
 - Valores de `enum class`: `MAIÚSCULAS` (`HttpMethod::GET`). Constantes: `kPascalCase`.
 - Headers com `#pragma once`. Cada header inclui o que usa (não depender de includes transitivos).
-- Tudo dentro do namespace `citius` (ainda falta aplicar no código atual).
+- Tudo dentro do namespace `citius`.
 - Warnings ligados: `-Wall -Wextra -Wpedantic`. **Código novo não pode gerar warnings.**
 
 ### Regras de C++ moderno (obrigatórias)
@@ -89,18 +90,18 @@ Siga o estilo já existente no repositório:
 
 ## Estado atual e dívidas conhecidas
 
-Já existe (Fase "0"): `Server` que abre socket/bind/listen e atende **um cliente por vez** respondendo texto fixo; `HttpParser` **incompleto**; `HttpResponse.hpp` vazio; `tests/` vazio; `www/` com arquivos vazios; `README` original estava vazio.
+Fase 0 concluída: CMake com `citius_core` (biblioteca) + `citius_server` + `citius_tests`, namespace `citius`, GoogleTest, opção `CITIUS_SANITIZE`, `.clang-format` e `HttpParser::parse` da linha de requisição (sem cabeçalhos ainda). `Server` ainda atende **um cliente por vez** respondendo texto fixo; `HttpResponse.hpp` vazio; `www/` com arquivos vazios; sem testes de integração.
 
-Bugs/pontos fracos já identificados (corrigir na Fase 0/1, um por commit, com teste quando possível):
+Dívidas (resolver na Fase 1+, uma por commit, com teste quando possível):
 
-1. `HttpParser::parse_method`: `"DELETE"` retorna `HttpMethod::GET` (deveria ser `DELETE`).
-2. `HttpParser::parse`: a função **não retorna nada no final** (comportamento indefinido); falta preencher e devolver o `HttpRequest`. Também não valida método `UNKNOWN`, versão nem lê cabeçalhos.
-3. `version_str = request_line.substr(second_space)` inclui o espaço; deveria ser `substr(second_space + 1)`.
-4. `HttpRequest::method` não tem valor inicial; inicializar membros.
-5. `Server::run`: um único `recv` (pode vir incompleto), imprime `buffer.data()` como C-string, não trata `send` parcial, sem `SO_REUSEADDR`, laço infinito sem forma de encerrar, atende um cliente por vez.
-6. `Server.hpp`: `start()` é privado e chamado no construtor — ok, mas a lógica de socket deve migrar para uma classe `Socket` RAII; `Server.cpp` usa `std::string` sem `#include <string>`.
-7. `CMakeLists.txt`: `cmake_minimum_required(VERSION 3.10)` é antigo para C++20; listar fontes à mão não escala; falta biblioteca separada, opções de sanitizers e testes.
-8. Typos em comentários/mensagens ("Falhaao", "recebiga", "fisrt") — corrigir quando tocar nas linhas.
+1. `HttpParser`: não lê cabeçalhos, não valida a versão (505) nem o formato do caminho; `std::optional` não diz o motivo do erro (precisa distinguir 400/405/505).
+2. `Server::run`: um único `recv` (pode vir incompleto), imprime `buffer.data()` como C-string (lê além do buffer se vierem 4096 bytes), não trata `send` parcial nem `EINTR`, sem `SO_REUSEADDR`, sem `SO_NOSIGPIPE` (SIGPIPE derruba o processo no macOS), sem timeout de leitura, laço infinito sem encerramento, ignora o parser e responde sempre 200.
+3. Fd vaza se o construtor de `Server` lançar (o destrutor não roda) e `Server` é copiável com fd cru: migrar para uma classe `Socket` RAII move-only. `client_fd` também precisa de dono RAII.
+4. `main` não captura exceções (porta ocupada vira `terminate`).
+5. `CMakeLists.txt`: fontes listadas à mão (sem `GLOB`/lista por diretório) e sem `CMAKE_BUILD_TYPE` padrão.
+6. `std::format` na libc++ da Apple pode exigir deployment target recente (não verificado).
+7. Typos restantes em `Server.cpp` ("Falhaao", "recebiga").
+8. Código ainda não passou pelo `clang-format` (arquivo `.clang-format` existe; formatar numa mudança só de formatação).
 
 ## Testes
 
