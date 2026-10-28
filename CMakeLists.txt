@@ -23,3 +23,7 @@ add_executable(citius_server src/main.cpp)
 set_target_properties(citius_server PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(citius_server PRIVATE citius_core)
 target_compile_options(citius_server PRIVATE -Wall -Wextra -Wpedantic)
+
+# Testes (ctest --test-dir build)
+enable_testing()
+add_subdirectory(tests)
