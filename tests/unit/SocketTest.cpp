@@ -97,3 +97,42 @@ TEST(SocketTest, ResetFechaOFdAtual) {
     EXPECT_FALSE(socket.valid());
     EXPECT_FALSE(fd_aberto(fd));
 }
+
+namespace {
+
+int opcao(int fd, int nivel, int nome) {
+    int valor = 0;
+    socklen_t tamanho = sizeof(valor);
+    EXPECT_EQ(getsockopt(fd, nivel, nome, &valor, &tamanho), 0);
+    return valor;
+}
+
+} // namespace
+
+TEST(SocketTest, SetReuseAddrLigaAOpcao) {
+    Socket socket{novo_fd()};
+    ASSERT_TRUE(socket.valid());
+    ASSERT_EQ(opcao(socket.get(), SOL_SOCKET, SO_REUSEADDR), 0);
+
+    EXPECT_TRUE(socket.set_reuse_addr());
+    EXPECT_NE(opcao(socket.get(), SOL_SOCKET, SO_REUSEADDR), 0);
+}
+
+TEST(SocketTest, SetNoSigpipeLigaAOpcaoNoMacOS) {
+    Socket socket{novo_fd()};
+    ASSERT_TRUE(socket.valid());
+
+    EXPECT_TRUE(socket.set_no_sigpipe());
+#ifdef SO_NOSIGPIPE
+    EXPECT_NE(opcao(socket.get(), SOL_SOCKET, SO_NOSIGPIPE), 0);
+#endif
+}
+
+TEST(SocketTest, OpcoesFalhamEmSocketInvalido) {
+    Socket socket;
+
+    EXPECT_FALSE(socket.set_reuse_addr());
+#ifdef SO_NOSIGPIPE
+    EXPECT_FALSE(socket.set_no_sigpipe());
+#endif
+}
