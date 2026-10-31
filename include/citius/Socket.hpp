@@ -1,4 +1,7 @@
 #pragma once
+#include <span>
+#include <string_view>
+#include <sys/types.h> // ssize_t
 
 namespace citius {
 
@@ -30,6 +33,14 @@ public:
     // Impede que send() em conexao fechada mate o processo com SIGPIPE.
     // So tem efeito no macOS (SO_NOSIGPIPE); no Linux usa-se MSG_NOSIGNAL no send.
     [[nodiscard]] bool set_no_sigpipe() noexcept;
+
+    /// Envia todos os bytes de @p data, repetindo send() em envios parciais e em EINTR.
+    /// @return false se a conexao falhou (ex.: o cliente fechou) antes de enviar tudo.
+    [[nodiscard]] bool send_all(std::string_view data) noexcept;
+
+    /// Le ate buffer.size() bytes com um unico recv() (repete apenas em EINTR).
+    /// @return bytes lidos; 0 se o par fechou a conexao; -1 em erro.
+    [[nodiscard]] ssize_t recv_some(std::span<char> buffer) noexcept;
 
 private:
     int m_fd = -1;

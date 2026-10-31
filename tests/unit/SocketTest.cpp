@@ -1,7 +1,10 @@
 #include "citius/Socket.hpp"
+#include <array>
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
+#include <string>
+#include <thread>
 #include <type_traits>
 #include <unistd.h>
 #include <utility>
@@ -135,4 +138,60 @@ TEST(SocketTest, OpcoesFalhamEmSocketInvalido) {
 #ifdef SO_NOSIGPIPE
     EXPECT_FALSE(socket.set_no_sigpipe());
 #endif
+}
+
+TEST(SocketTest, SendAllEnviaTudoMesmoPayloadGrande) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};
+    Socket receptor{fds[1]};
+    ASSERT_TRUE(emissor.set_no_sigpipe());
+
+    // maior que o buffer do kernel: obriga send() a enviar em partes
+    const std::string payload(4 * 1024 * 1024, 'x');
+    std::string recebido;
+    std::thread leitor([&] {
+        std::array<char, 65536> buffer;
+        ssize_t n;
+        while ((n = receptor.recv_some(buffer)) > 0) {
+            recebido.append(buffer.data(), static_cast<std::size_t>(n));
+        }
+    });
+
+    EXPECT_TRUE(emissor.send_all(payload));
+    emissor.reset();  // fecha para o leitor ver o fim
+    leitor.join();
+
+    EXPECT_EQ(recebido.size(), payload.size());
+    EXPECT_EQ(recebido, payload);
+}
+
+TEST(SocketTest, SendAllFalhaSemMatarOProcessoQuandoOParFechou) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};
+    Socket receptor{fds[1]};
+    ASSERT_TRUE(emissor.set_no_sigpipe());
+    receptor.reset();
+
+    EXPECT_FALSE(emissor.send_all("ola"));  // sem SIGPIPE ele derrubaria o teste
+}
+
+TEST(SocketTest, RecvSomeDevolveZeroQuandoOParFechou) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};
+    Socket receptor{fds[1]};
+    emissor.reset();
+
+    std::array<char, 16> buffer;
+    EXPECT_EQ(receptor.recv_some(buffer), 0);
+}
+
+TEST(SocketTest, RecvSomeDevolveErroEmSocketInvalido) {
+    Socket socket;
+    std::array<char, 16> buffer;
+
+    EXPECT_EQ(socket.recv_some(buffer), -1);
+    EXPECT_FALSE(socket.send_all("x"));
 }
