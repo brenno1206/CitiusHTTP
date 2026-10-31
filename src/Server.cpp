@@ -1,4 +1,5 @@
 #include "citius/Server.hpp"
+#include "citius/RequestReader.hpp"
 #include <sys/socket.h> // Para socket(), bind(), listen()
 #include <netinet/in.h> // Para struct sockaddr_in, htons(), htonl()
 #include <unistd.h>     // Para close()
@@ -9,6 +10,11 @@
 #include <string>
 
 namespace citius {
+
+namespace {
+// Teto para linha de requisicao + cabecalhos (o mesmo valor que o nginx usa por padrao)
+constexpr std::size_t kMaxRequestHeadBytes = 8192;
+}
 
 Server::Server(std::uint16_t port) {
     start(port);
@@ -64,21 +70,27 @@ void Server::run(){
         }
 
         std::cout << "\n--- Novo Cliente Conectado! ---\n";
-        
-        // cria uma array de 4KB na stack
-        std::array<char, 4096> buffer{}; // o {} garante que ele seja preenchido com zeros
 
-        // recv pede: o socket do cliente, onde salvar os dados, o tamanho máximo, e flags
-        ssize_t bytes_lidos = recv(client.get(), buffer.data(), buffer.size(), 0);
-        
-        if (bytes_lidos > 0) {
-            std::cout << std::format("Requisicao recebida:\n{}\n", buffer.data());
+        ReadResult request = read_request_head(client, kMaxRequestHeadBytes);
+
+        if (request.status == ReadStatus::TOO_LARGE) {
+            if (!client.send_all("HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")) {
+                std::cerr << "Falha ao enviar resposta 431.\n";
+            }
+            continue;
+        }
+        if (request.status != ReadStatus::COMPLETE) {
+            std::cout << "Conexao encerrada antes de completar a requisicao.\n";
+            continue;
         }
 
-        std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello Citius!";
+        std::cout << std::format("Requisicao recebida:\n{}\n", request.data);
 
-        // send pede: o socket do cliente, o ponteiro para os dados brutos da string, o tamanho, e flags
-        send(client.get(), response.c_str(), response.size(), 0);
+        // TODO(passo 6): passar request.data pelo HttpParser e montar a resposta certa
+        const std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello Citius!";
+        if (!client.send_all(response)) {
+            std::cerr << "Falha ao enviar resposta.\n";
+        }
 
         // sem close(): o destrutor de 'client' fecha o fd ao fim de cada volta do laço
         std::cout << "Conexao encerrada.\n";

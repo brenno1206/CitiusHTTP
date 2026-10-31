@@ -14,6 +14,7 @@ include(GoogleTest)
 add_executable(citius_tests
     unit/HttpParserTest.cpp
     unit/SocketTest.cpp
+    unit/RequestReaderTest.cpp
 )
 set_target_properties(citius_tests PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(citius_tests PRIVATE citius_core GTest::gtest_main)
