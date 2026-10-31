@@ -19,7 +19,7 @@ Server::~Server() {
     }
 }
 void Server::start(std::uint16_t port) {
-
+    
     m_server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if(m_server_fd < 0) {
@@ -31,12 +31,15 @@ void Server::start(std::uint16_t port) {
     .sin_port = htons(port), // escolhe a porta
     .sin_addr = { .s_addr = INADDR_ANY } // aceita todos os enderecos de ip da maquina
     };
+    // bind associa o socket a um endereco e porta
     auto bindResponse = bind(m_server_fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
 
     if(bindResponse < 0) {
         throw std::runtime_error("Erro no bind.\n");
     }
 
+    // listen coloca o socket em modo de escuta
+    // 10 é o tamanho da fila de conexoes pendentes
     if(listen(m_server_fd, 10) < 0) {
         throw std::runtime_error("Falha no listen.\n");
     }
@@ -50,7 +53,7 @@ void Server::run(){
         int client_fd = accept(m_server_fd, nullptr, nullptr);
 
         if(client_fd < 0) {
-            std::cerr <<  "Falhaao aceitar conexao.\n";
+            std::cerr <<  "Falha ao aceitar conexao.\n";
             continue;
         }
 
@@ -63,7 +66,7 @@ void Server::run(){
         ssize_t bytes_lidos = recv(client_fd, buffer.data(), buffer.size(), 0);
         
         if (bytes_lidos > 0) {
-            std::cout << std::format("Requisicao recebiga:\n{}\n", buffer.data());
+            std::cout << std::format("Requisicao recebida:\n{}\n", buffer.data());
         }
 
         std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello Citius!";
