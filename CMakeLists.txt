@@ -7,6 +7,7 @@ option(CITIUS_SANITIZE "Compila com AddressSanitizer e UndefinedBehaviorSanitize
 # Biblioteca com quase todo o código (sem main), reaproveitada pelo servidor e pelos testes
 add_library(citius_core STATIC
     src/HttpParser.cpp
+    src/Socket.cpp
     src/Server.cpp
 )
 
