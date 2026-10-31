@@ -18,12 +18,10 @@ TEST(HttpParserTest, ReconheceTodosOsMetodosConhecidos) {
     EXPECT_EQ(HttpParser::parse("GET / HTTP/1.1\r\n")->method, HttpMethod::GET);
     EXPECT_EQ(HttpParser::parse("POST / HTTP/1.1\r\n")->method, HttpMethod::POST);
     EXPECT_EQ(HttpParser::parse("PUT / HTTP/1.1\r\n")->method, HttpMethod::PUT);
-    // regressao: DELETE era mapeado para GET
     EXPECT_EQ(HttpParser::parse("DELETE / HTTP/1.1\r\n")->method, HttpMethod::DELETE);
 }
 
 TEST(HttpParserTest, VersaoNaoIncluiOEspaco) {
-    // regressao: substr(second_space) devolvia " HTTP/1.1"
     auto request = HttpParser::parse("GET / HTTP/1.1\r\n");
 
     ASSERT_TRUE(request.has_value());
@@ -32,7 +30,7 @@ TEST(HttpParserTest, VersaoNaoIncluiOEspaco) {
 
 TEST(HttpParserTest, RejeitaMetodoDesconhecido) {
     EXPECT_FALSE(HttpParser::parse("FOO / HTTP/1.1\r\n").has_value());
-    EXPECT_FALSE(HttpParser::parse("get / HTTP/1.1\r\n").has_value());  // metodos sao case-sensitive
+    EXPECT_FALSE(HttpParser::parse("get / HTTP/1.1\r\n").has_value());
 }
 
 TEST(HttpParserTest, RejeitaEntradaVaziaOuSemFimDeLinha) {
@@ -41,8 +39,8 @@ TEST(HttpParserTest, RejeitaEntradaVaziaOuSemFimDeLinha) {
 }
 
 TEST(HttpParserTest, RejeitaLinhaDeRequisicaoMalformada) {
-    EXPECT_FALSE(HttpParser::parse("GET\r\n").has_value());
-    EXPECT_FALSE(HttpParser::parse("GET /\r\n").has_value());
+    EXPECT_FALSE(HttpParser::parse("GET\r\n").has_value()); 
+    EXPECT_FALSE(HttpParser::parse("GET /\r\n").has_value()); 
     EXPECT_FALSE(HttpParser::parse("GET  HTTP/1.1\r\n").has_value());  // caminho vazio
     EXPECT_FALSE(HttpParser::parse("GET / \r\n").has_value());         // versao vazia
 }
