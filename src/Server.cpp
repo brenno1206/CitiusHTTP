@@ -21,6 +21,11 @@ void Server::start(std::uint16_t port) {
         throw std::runtime_error("Erro na criacao do socket\n");
     }
 
+    // precisa vir antes do bind, senao reiniciar o servidor falha com "Address already in use"
+    if(!m_server_socket.set_reuse_addr()) {
+        throw std::runtime_error("Falha ao definir SO_REUSEADDR.\n");
+    }
+
     sockaddr_in address{
     .sin_family = AF_INET,  // IPv4 - ip classico
     .sin_port = htons(port), // escolhe a porta
@@ -49,6 +54,12 @@ void Server::run(){
 
         if(!client.valid()) {
             std::cerr <<  "Falha ao aceitar conexao.\n";
+            continue;
+        }
+
+        // SO_NOSIGPIPE e por socket: precisa ser definido em cada cliente aceito
+        if(!client.set_no_sigpipe()) {
+            std::cerr << "Falha ao definir SO_NOSIGPIPE no cliente.\n";
             continue;
         }
 
