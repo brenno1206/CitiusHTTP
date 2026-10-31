@@ -8,19 +8,19 @@ Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a 
 
 ## Índice
 
-1. [Glossário para quem está começando](#1-glossário-para-quem-está-começando)
+1. [Glossário](#1-glossário)
 2. [Como um servidor HTTP funciona](#2-como-um-servidor-http-funciona)
 3. [Arquitetura](#3-arquitetura)
 4. [Padrões e práticas profissionais aplicados](#4-padrões-e-práticas-profissionais-aplicados)
 5. [Compilar, rodar e testar](#5-compilar-rodar-e-testar)
 6. [Roadmap por fases](#6-roadmap-por-fases)
-7. [Como o Claude Code funciona neste projeto (CLAUDE.md)](#7-como-o-claude-code-funciona-neste-projeto-claudemd)
+7. [Claude Code](#7-como-o-claude-code-funciona-neste-projeto-claudemd)
 8. [Guia: como desenvolver este projeto com o Claude](#8-guia-como-desenvolver-este-projeto-com-o-claude)
 9. [Referências](#9-referências)
 
 ---
 
-## 1. Glossário para quem está começando
+## 1. Glossário
 
 | Termo | Explicação curta |
 |---|---|
@@ -264,12 +264,8 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 - quais armadilhas conhecer;
 - **como você quer que ele se comporte** (neste projeto: como mentor, explicando o porquê de cada passo).
 
-Sem o `CLAUDE.md`, a cada sessão você teria que reexplicar tudo.
-
 ### Como ele é carregado
 
-- O arquivo `CLAUDE.md` da pasta onde você abre o Claude Code é lido sozinho.
-- Existe também um arquivo global pessoal em `~/.claude/CLAUDE.md` (preferências suas para todos os projetos) e a possibilidade de `CLAUDE.md` em subpastas (lido quando o Claude trabalha ali).
 - Dá para incluir outros arquivos com `@caminho/do/arquivo` dentro do `CLAUDE.md`.
 - O comando `/memory` abre os arquivos de memória para edição, e `/init` gera um `CLAUDE.md` inicial analisando o código (aqui já foi escrito à mão).
 
@@ -286,7 +282,7 @@ Sem o `CLAUDE.md`, a cada sessão você teria que reexplicar tudo.
 - Papel do Claude: **mentor** que explica conceitos em português, trabalha em passos pequenos e não reescreve seus arquivos inteiros sem avisar.
 - Stack: C++20, CMake, Apple Clang no macOS, POSIX sockets, sem bibliotecas externas além do GoogleTest.
 - Comandos de build, execução e teste.
-- Arquitetura em camadas e convenções de nomes (as mesmas que você já usa: classes `PascalCase`, funções `snake_case`, membros `m_`).
+- Arquitetura em camadas e convenções de nome: classes `PascalCase`, funções `snake_case`, membros `m_`.
 - Lista de bugs conhecidos no código atual.
 - Regras de segurança de rede e a "definição de pronto" de cada tarefa.
 
