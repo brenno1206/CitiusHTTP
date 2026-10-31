@@ -12,27 +12,23 @@ HttpMethod HttpParser::parse_method(std::string_view method_str) {
 }
 
 std::optional<HttpRequest> HttpParser::parse(std::string_view raw_request) {
-    // encontra o fim da primeira linha
     std::size_t first_line_end = raw_request.find("\r\n");
     if(first_line_end == std::string_view::npos){
         return std::nullopt;
     }
 
-    // isola a primeira linha (ex: "GET / HTTP/1.1")
     std::string_view request_line = raw_request.substr(0, first_line_end);
 
-    // encontra o primeiro espaco (separa metodo do caminho)
+    // formato: metodo SP caminho SP versao (RFC 9112, secao 3)
     std::size_t first_space = request_line.find(' ');
     if(first_space == std::string_view::npos){
         return std::nullopt;
     }
 
-    // encontra o segundo espaco (separa caminho da versao)
     std::size_t second_space = request_line.find(' ', first_space + 1);
     if (second_space == std::string_view::npos) {
         return std::nullopt;
     }
-    // extrai as 3 partes
     std::string_view method_str = request_line.substr(0, first_space);
     std::string_view path_str = request_line.substr(first_space + 1, second_space - (first_space + 1));
     std::string_view version_str = request_line.substr(second_space + 1);
@@ -43,7 +39,6 @@ std::optional<HttpRequest> HttpParser::parse(std::string_view raw_request) {
         return std::nullopt;
     }
 
-    // objeto final
     HttpRequest request;
     request.method = method;
     request.path = std::string(path_str);

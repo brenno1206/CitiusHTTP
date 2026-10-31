@@ -1,7 +1,7 @@
 #include "citius/Socket.hpp"
 #include <cerrno>
 #include <sys/socket.h> // setsockopt(), send(), recv()
-#include <unistd.h> // close()
+#include <unistd.h>     // close()
 #include <utility>
 
 namespace citius {
@@ -10,12 +10,10 @@ Socket::~Socket() {
     reset();
 }
 
-// transfere a posse do fd de other para this.
 Socket::Socket(Socket&& other) noexcept : m_fd(other.release()) {}
 
-// transfere a posse do fd de other para this.
 Socket& Socket::operator=(Socket&& other) noexcept {
-    // se for auto-atribuicao, release() esvazia other (== *this) e reset() nao fecha nada
+    // sem este teste, "a = std::move(a)" fecharia o proprio fd
     if (this != &other) {
         reset(other.release());
     }
@@ -26,8 +24,6 @@ int Socket::release() noexcept {
     return std::exchange(m_fd, -1);
 }
 
-// Fecha o fd atual (se houver) e passa a guardar new_fd.
-// tem new_fd default = -1, que fecha o fd atual e deixa o Socket invalido.
 void Socket::reset(int new_fd) noexcept {
     if (m_fd >= 0) {
         ::close(m_fd);
@@ -35,7 +31,6 @@ void Socket::reset(int new_fd) noexcept {
     m_fd = new_fd;
 }
 
-// Permite reusar a porta logo apos reiniciar (evita "Address already in use").
 bool Socket::set_reuse_addr() noexcept {
     int on = 1;
     return ::setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) == 0;

@@ -38,6 +38,8 @@ clang-format -i src/*.cpp include/citius/**/*.hpp   # formatar
 
 `build/` é ignorado pelo git. Nunca commitar artefatos de build.
 
+**Armadilha de ambiente (macOS):** se as Command Line Tools forem atualizadas além do Xcode, a linkagem falha com `tapi error: malformed file ... unknown architecture` (o `ld` do Xcode não lê o SDK mais novo das CLT). Solução: `export SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk` (idealmente no `~/.zshrc`) e reconfigurar com um diretório de build novo. Remover quando o Xcode for atualizado.
+
 ## Arquitetura
 
 Camadas; **cada uma só depende das de baixo**:
@@ -67,6 +69,12 @@ Siga o estilo já existente no repositório:
 - Tudo dentro do namespace `citius`.
 - Warnings ligados: `-Wall -Wextra -Wpedantic`. **Código novo não pode gerar warnings.**
 
+### Comentários e documentação
+
+- **Todo item público de header** (classe, função, enum, campo não óbvio) leva comentário de documentação `///` em português, no header: o que faz, `@param` / `@return` quando não for óbvio, `@throws` se lançar, e regras de posse/vida (ex.: "copia os dados", "não guarde o `string_view`").
+- **Nos `.cpp` só comentários de porquê** (decisão, armadilha de SO, invariante). Não repetir o que o código já diz nem o que a doc do header já diz.
+- Comentários desatualizados são bug: ao mudar o código, atualize o comentário no mesmo commit.
+
 ### Regras de C++ moderno (obrigatórias)
 
 1. **RAII para todo recurso.** Socket, arquivo, thread: um objeto dono que libera no destrutor. Proibido `close()` espalhado pelo código.
@@ -90,18 +98,16 @@ Siga o estilo já existente no repositório:
 
 ## Estado atual e dívidas conhecidas
 
-Fase 0 concluída: CMake com `citius_core` (biblioteca) + `citius_server` + `citius_tests`, namespace `citius`, GoogleTest, opção `CITIUS_SANITIZE`, `.clang-format` e `HttpParser::parse` da linha de requisição (sem cabeçalhos ainda). `Server` ainda atende **um cliente por vez** respondendo texto fixo; `HttpResponse.hpp` vazio; `www/` com arquivos vazios; sem testes de integração.
+Fase 0 concluída. **Fase 1 em andamento** (branch `feat/fase-1-rede-parser`): já existem `Socket` RAII move-only (`SO_REUSEADDR`, `SO_NOSIGPIPE`/`MSG_NOSIGNAL`, `send_all`, `recv_some`), `read_request_head` (lê até `\r\n\r\n` com limite; `Server` responde 431 se passar de 8 KB) e `main` captura exceções. Faltam: parser v2 com motivo de erro e cabeçalhos (passo 4), `HttpResponse`/`StatusCode` (5) e ligar tudo no `Server` (6). `Server` ainda atende **um cliente por vez** e responde texto fixo 200; `HttpResponse.hpp` vazio; `www/` vazio; sem testes de integração com o `Server`.
 
-Dívidas (resolver na Fase 1+, uma por commit, com teste quando possível):
+Dívidas (resolver uma por commit, com teste quando possível):
 
-1. `HttpParser`: não lê cabeçalhos, não valida a versão (505) nem o formato do caminho; `std::optional` não diz o motivo do erro (precisa distinguir 400/405/505).
-2. `Server::run`: um único `recv` (pode vir incompleto), imprime `buffer.data()` como C-string (lê além do buffer se vierem 4096 bytes), não trata `send` parcial nem `EINTR`, sem `SO_REUSEADDR`, sem `SO_NOSIGPIPE` (SIGPIPE derruba o processo no macOS), sem timeout de leitura, laço infinito sem encerramento, ignora o parser e responde sempre 200.
-3. Fd vaza se o construtor de `Server` lançar (o destrutor não roda) e `Server` é copiável com fd cru: migrar para uma classe `Socket` RAII move-only. `client_fd` também precisa de dono RAII.
-4. `main` não captura exceções (porta ocupada vira `terminate`).
-5. `CMakeLists.txt`: fontes listadas à mão (sem `GLOB`/lista por diretório) e sem `CMAKE_BUILD_TYPE` padrão.
-6. `std::format` na libc++ da Apple pode exigir deployment target recente (não verificado).
-7. Typos restantes em `Server.cpp` ("Falhaao", "recebiga").
-8. Código ainda não passou pelo `clang-format` (arquivo `.clang-format` existe; formatar numa mudança só de formatação).
+1. `HttpParser`: não lê cabeçalhos, não valida a versão (505) nem o formato do caminho; `std::optional` não diz o motivo do erro (precisa distinguir 400/405/505). → passo 4.
+2. `Server::run`: ignora o parser e responde sempre 200 (passo 6); sem timeout de leitura (Fase 5); laço infinito sem encerramento gracioso (Fase 4); `accept` com erro não distingue `EINTR`.
+3. `Server::start` ainda cria o socket de escuta direto com `socket()`/`bind()`; mover para `net/` (`Listener`) na migração de pastas.
+4. `CMakeLists.txt`: fontes listadas à mão (sem `GLOB`/lista por diretório) e sem `CMAKE_BUILD_TYPE` padrão.
+5. `std::format` na libc++ da Apple pode exigir deployment target recente (compila no Xcode 26.6; Linux não verificado).
+6. Código ainda não passou pelo `clang-format` (arquivo `.clang-format` existe; formatar numa mudança só de formatação).
 
 ## Testes
 

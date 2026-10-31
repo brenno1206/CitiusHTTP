@@ -2,25 +2,23 @@
 #include "citius/RequestReader.hpp"
 #include <sys/socket.h> // Para socket(), bind(), listen()
 #include <netinet/in.h> // Para struct sockaddr_in, htons(), htonl()
-#include <unistd.h>     // Para close()
 #include <stdexcept>    // Para lançar std::runtime_error
 #include <format>
 #include <iostream>
-#include <array>
 #include <string>
 
 namespace citius {
 
 namespace {
-// Teto para linha de requisicao + cabecalhos (o mesmo valor que o nginx usa por padrao)
+// Teto para linha de requisicao + cabecalhos; acima disso respondemos 431. 8 KB e um limite comum (ex.: nginx)
 constexpr std::size_t kMaxRequestHeadBytes = 8192;
 }
 
 Server::Server(std::uint16_t port) {
     start(port);
 }
-void Server::start(std::uint16_t port) {
 
+void Server::start(std::uint16_t port) {
     m_server_socket.reset(socket(AF_INET, SOCK_STREAM, 0));
 
     if(!m_server_socket.valid()) {
@@ -33,19 +31,15 @@ void Server::start(std::uint16_t port) {
     }
 
     sockaddr_in address{
-    .sin_family = AF_INET,  // IPv4 - ip classico
-    .sin_port = htons(port), // escolhe a porta
-    .sin_addr = { .s_addr = INADDR_ANY } // aceita todos os enderecos de ip da maquina
+        .sin_family = AF_INET,                // IPv4
+        .sin_port = htons(port),              // htons: converte para a ordem de bytes da rede (big-endian)
+        .sin_addr = { .s_addr = INADDR_ANY }  // aceita conexoes em qualquer interface da maquina
     };
-    // bind associa o socket a um endereco e porta
-    auto bindResponse = bind(m_server_socket.get(),reinterpret_cast<const sockaddr*>(&address), sizeof(address));
-
-    if(bindResponse < 0) {
+    if(bind(m_server_socket.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
         throw std::runtime_error("Erro no bind.\n");
     }
 
-    // listen coloca o socket em modo de escuta
-    // 10 é o tamanho da fila de conexoes pendentes
+    // 10 = tamanho da fila de conexoes aguardando accept()
     if(listen(m_server_socket.get(), 10) < 0) {
         throw std::runtime_error("Falha no listen.\n");
     }
@@ -55,7 +49,7 @@ void Server::start(std::uint16_t port) {
 
 void Server::run(){
     while(true) {
-        // Os 'nullptr' significam que, por enquanto, nao queremos saber o IP do cliente
+        // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
         Socket client{accept(m_server_socket.get(), nullptr, nullptr)};
 
         if(!client.valid()) {
