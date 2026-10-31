@@ -1,17 +1,17 @@
 #pragma once
 
+#include "citius/Socket.hpp"
 #include <cstdint>
 
 namespace citius {
 
 class Server {
 private:
-int m_server_fd = -1;  // SOCKET
+Socket m_server_socket;  // dono do fd de escuta; fecha sozinho
 void start(std::uint16_t port);
 
 public:
     explicit Server(std::uint16_t port);
-    ~Server();
     void run();
 };
 

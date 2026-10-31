@@ -13,16 +13,11 @@ namespace citius {
 Server::Server(std::uint16_t port) {
     start(port);
 }
-Server::~Server() {
-    if(m_server_fd >= 0) {
-        close(m_server_fd);
-    }
-}
 void Server::start(std::uint16_t port) {
-    
-    m_server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
-    if(m_server_fd < 0) {
+    m_server_socket.reset(socket(AF_INET, SOCK_STREAM, 0));
+
+    if(!m_server_socket.valid()) {
         throw std::runtime_error("Erro na criacao do socket\n");
     }
 
@@ -32,7 +27,7 @@ void Server::start(std::uint16_t port) {
     .sin_addr = { .s_addr = INADDR_ANY } // aceita todos os enderecos de ip da maquina
     };
     // bind associa o socket a um endereco e porta
-    auto bindResponse = bind(m_server_fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+    auto bindResponse = bind(m_server_socket.get(),reinterpret_cast<const sockaddr*>(&address), sizeof(address));
 
     if(bindResponse < 0) {
         throw std::runtime_error("Erro no bind.\n");
@@ -40,7 +35,7 @@ void Server::start(std::uint16_t port) {
 
     // listen coloca o socket em modo de escuta
     // 10 é o tamanho da fila de conexoes pendentes
-    if(listen(m_server_fd, 10) < 0) {
+    if(listen(m_server_socket.get(), 10) < 0) {
         throw std::runtime_error("Falha no listen.\n");
     }
 
@@ -50,9 +45,9 @@ void Server::start(std::uint16_t port) {
 void Server::run(){
     while(true) {
         // Os 'nullptr' significam que, por enquanto, nao queremos saber o IP do cliente
-        int client_fd = accept(m_server_fd, nullptr, nullptr);
+        Socket client{accept(m_server_socket.get(), nullptr, nullptr)};
 
-        if(client_fd < 0) {
+        if(!client.valid()) {
             std::cerr <<  "Falha ao aceitar conexao.\n";
             continue;
         }
@@ -63,7 +58,7 @@ void Server::run(){
         std::array<char, 4096> buffer{}; // o {} garante que ele seja preenchido com zeros
 
         // recv pede: o socket do cliente, onde salvar os dados, o tamanho máximo, e flags
-        ssize_t bytes_lidos = recv(client_fd, buffer.data(), buffer.size(), 0);
+        ssize_t bytes_lidos = recv(client.get(), buffer.data(), buffer.size(), 0);
         
         if (bytes_lidos > 0) {
             std::cout << std::format("Requisicao recebida:\n{}\n", buffer.data());
@@ -72,9 +67,9 @@ void Server::run(){
         std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello Citius!";
 
         // send pede: o socket do cliente, o ponteiro para os dados brutos da string, o tamanho, e flags
-        send(client_fd, response.c_str(), response.size(), 0);
+        send(client.get(), response.c_str(), response.size(), 0);
 
-        close(client_fd);
+        // sem close(): o destrutor de 'client' fecha o fd ao fim de cada volta do laço
         std::cout << "Conexao encerrada.\n";
     }
 }
