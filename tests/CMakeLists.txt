@@ -14,6 +14,7 @@ include(GoogleTest)
 add_executable(citius_tests
     unit/HttpParserTest.cpp
     unit/HttpResponseTest.cpp
+    unit/MimeTest.cpp
     unit/SocketTest.cpp
     unit/RequestReaderTest.cpp
     integration/ServerTest.cpp
