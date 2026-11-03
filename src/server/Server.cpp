@@ -1,12 +1,19 @@
 #include "citius/server/Server.hpp"
 #include "citius/files/StaticFiles.hpp"
+#include "citius/http/HttpRequest.hpp"
 #include "citius/http/HttpResponse.hpp"
+#include "citius/http/StatusCode.hpp"
 #include "citius/net/Poller.hpp"
+#include "citius/net/Socket.hpp"
+#include "citius/server/Connection.hpp"
 #include "citius/util/Logger.hpp"
-#include <algorithm>
-#include <arpa/inet.h> // ntohs()
+#include <arpa/inet.h> // IWYU pragma: keep (ntohs)
+#include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <format>
 #include <iterator>
 #include <memory>

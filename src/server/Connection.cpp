@@ -1,9 +1,17 @@
 #include "citius/server/Connection.hpp"
+#include "citius/http/HttpRequest.hpp"
+#include "citius/http/HttpResponse.hpp"
+#include "citius/http/StatusCode.hpp"
+#include "citius/net/Socket.hpp"
+#include "citius/parse/RequestAssembler.hpp"
 #include "citius/util/Logger.hpp"
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <exception>
 #include <format>
+#include <optional>
+#include <sys/types.h> // IWYU pragma: keep (ssize_t)
 #include <utility>
 
 namespace citius {

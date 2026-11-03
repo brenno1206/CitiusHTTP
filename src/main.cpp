@@ -1,15 +1,17 @@
+#include "citius/http/HttpRequest.hpp"
+#include "citius/http/HttpResponse.hpp"
 #include "citius/server/Config.hpp"
 #include "citius/server/Server.hpp"
 #include "citius/util/Logger.hpp"
 #include <algorithm>
 #include <atomic>
-#include <climits> // OPEN_MAX (macOS)
-#include <csignal>
+#include <climits> // IWYU pragma: keep (OPEN_MAX, so existe no macOS)
 #include <cstddef>
 #include <exception>
 #include <format>
 #include <iostream>
-#include <limits>
+#include <limits> // IWYU pragma: keep (usado no ramo sem OPEN_MAX)
+#include <signal.h>
 #include <string>
 #include <string_view>
 #include <sys/resource.h> // getrlimit(), setrlimit()

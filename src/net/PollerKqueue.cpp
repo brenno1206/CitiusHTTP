@@ -2,10 +2,13 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <stdexcept>
 #include <sys/event.h>
-#include <sys/time.h>
+#include <vector>
 
 namespace citius {
 

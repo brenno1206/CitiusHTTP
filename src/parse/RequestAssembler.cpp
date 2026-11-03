@@ -1,5 +1,9 @@
 #include "citius/parse/RequestAssembler.hpp"
+#include "citius/http/StatusCode.hpp"
+#include "citius/parse/HttpParser.hpp"
+#include <cstddef>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace citius {

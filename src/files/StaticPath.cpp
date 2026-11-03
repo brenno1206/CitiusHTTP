@@ -1,5 +1,10 @@
 #include "citius/files/StaticPath.hpp"
 #include <algorithm>
+#include <cstddef>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <system_error>
 
 namespace citius {

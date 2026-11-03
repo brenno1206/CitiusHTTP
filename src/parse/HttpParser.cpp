@@ -1,8 +1,14 @@
 #include "citius/parse/HttpParser.hpp"
+#include "citius/http/HttpRequest.hpp"
 #include "citius/http/HttpSyntax.hpp"
+#include "citius/http/StatusCode.hpp"
+#include "citius/util/AsciiText.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace citius {

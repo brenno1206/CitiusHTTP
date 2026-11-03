@@ -1,7 +1,9 @@
 #include "citius/server/ThreadPool.hpp"
 #include "citius/util/Logger.hpp"
+#include <cstddef>
 #include <exception>
 #include <format>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 

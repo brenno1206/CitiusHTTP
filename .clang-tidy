@@ -38,6 +38,7 @@ Checks: >
   cppcoreguidelines-special-member-functions,
   cppcoreguidelines-virtual-class-destructor,
   misc-const-correctness,
+  misc-include-cleaner,
   misc-redundant-expression,
   misc-unused-*
 
@@ -46,3 +47,9 @@ WarningsAsErrors: '*'
 
 # Analisa tambem os headers do projeto (mas nao os do sistema nem do GoogleTest)
 HeaderFilterRegex: '.*/include/citius/.*'
+
+CheckOptions:
+  # Headers internos de cada SO (ex.: <sys/_types/_ssize_t.h> no macOS) nao sao portaveis: o check nao
+  # deve sugeri-los nem tratar os includes portaveis (<sys/types.h>...) como "nao usados"
+  - key: misc-include-cleaner.IgnoreHeaders
+    value: 'sys/_.*;sys/signal\.h;sys/fcntl\.h;bits/.*'

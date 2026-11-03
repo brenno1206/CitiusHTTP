@@ -1,6 +1,10 @@
 #include "citius/http/HttpResponse.hpp"
 #include "citius/http/HttpSyntax.hpp"
+#include "citius/http/StatusCode.hpp"
+#include "citius/util/AsciiText.hpp"
 #include <algorithm>
+#include <string>
+#include <utility>
 
 namespace citius {
 

@@ -1,6 +1,10 @@
 #include "citius/routing/Router.hpp"
+#include "citius/http/HttpRequest.hpp"
+#include "citius/http/HttpResponse.hpp"
+#include "citius/http/StatusCode.hpp"
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace citius {

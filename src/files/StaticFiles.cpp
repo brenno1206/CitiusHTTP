@@ -1,11 +1,19 @@
 #include "citius/files/StaticFiles.hpp"
 #include "citius/files/Mime.hpp"
 #include "citius/files/StaticPath.hpp"
+#include "citius/http/HttpRequest.hpp"
+#include "citius/http/HttpResponse.hpp"
+#include "citius/http/StatusCode.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
 #include <optional>
 #include <string>
 #include <system_error>
+#include <utility>
 
 namespace citius {
 

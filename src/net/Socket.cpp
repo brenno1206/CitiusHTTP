@@ -1,8 +1,14 @@
 #include "citius/net/Socket.hpp"
 #include <cerrno>
-#include <fcntl.h>      // fcntl(), O_NONBLOCK
+#include <chrono>
+#include <cstddef>
+#include <ctime>
+#include <fcntl.h> // fcntl(), O_NONBLOCK
+#include <span>
+#include <string_view>
 #include <sys/socket.h> // setsockopt(), send(), recv()
-#include <sys/time.h>   // struct timeval
+#include <sys/time.h>   // IWYU pragma: keep (struct timeval; no Linux so vem daqui)
+#include <sys/types.h>  // IWYU pragma: keep (ssize_t, suseconds_t)
 #include <unistd.h>     // close()
 #include <utility>
 
