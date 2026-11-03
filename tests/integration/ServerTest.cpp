@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 using citius::Server;
@@ -22,17 +23,28 @@ using citius::Socket;
 
 namespace {
 
-// Pasta publica de teste (criada uma vez): index.html, style.css e um segredo FORA da raiz.
+// Pasta publica de teste (criada uma vez por processo): index.html, style.css e um segredo FORA da raiz.
+// O nome leva o pid porque o ctest roda cada teste num processo e, com --parallel, varios ao mesmo
+// tempo: uma pasta fixa seria apagada e recriada por um enquanto outro a usa.
 const std::filesystem::path& raiz_de_teste() {
-    static const std::filesystem::path root = [] {
-        auto base = std::filesystem::temp_directory_path() / "citius_server_test";
-        std::filesystem::remove_all(base);
-        std::filesystem::create_directories(base / "www");
-        std::ofstream{base / "www" / "index.html"} << "Hello Citius!";
-        std::ofstream{base / "www" / "style.css"} << "body{}";
-        std::ofstream{base / "secret.txt"} << "segredo";
-        return base / "www";
-    }();
+    struct Pasta {
+        std::filesystem::path base =
+            std::filesystem::temp_directory_path() / ("citius_server_test_" + std::to_string(::getpid()));
+
+        Pasta() {
+            std::filesystem::remove_all(base);
+            std::filesystem::create_directories(base / "www");
+            std::ofstream{base / "www" / "index.html"} << "Hello Citius!";
+            std::ofstream{base / "www" / "style.css"} << "body{}";
+            std::ofstream{base / "secret.txt"} << "segredo";
+        }
+        ~Pasta() {
+            std::error_code ignorado;
+            std::filesystem::remove_all(base, ignorado);
+        }
+    };
+    static const Pasta pasta;
+    static const std::filesystem::path root = pasta.base / "www";
     return root;
 }
 

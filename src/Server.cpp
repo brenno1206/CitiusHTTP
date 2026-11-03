@@ -93,7 +93,8 @@ void Server::start(std::uint16_t port) {
     sockaddr_in address{
         .sin_family = AF_INET,                // IPv4
         .sin_port = htons(port),              // htons: converte para a ordem de bytes da rede (big-endian)
-        .sin_addr = { .s_addr = INADDR_ANY }  // aceita conexoes em qualquer interface da maquina
+        .sin_addr = { .s_addr = INADDR_ANY }, // aceita conexoes em qualquer interface da maquina
+        .sin_zero = {}                        // preenchimento: o Linux o declara, e -Wmissing-field-initializers reclama se faltar
     };
     if(bind(m_server_socket.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
         throw std::runtime_error("Erro no bind.");
