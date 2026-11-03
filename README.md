@@ -2,7 +2,7 @@
 
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção (Fase 0 concluída, Fase 1 em andamento). Hoje o servidor aceita uma conexão, lê a requisição inteira em laço (com limite de 8 KB, senão responde 431), responde "Hello Citius!" e fecha. Há uma classe `Socket` RAII e testes unitários. O parser entende a linha de requisição e os cabeçalhos e diz o motivo de cada rejeição (400, 414, 431, 501, 505), e há `HttpResponse`/`StatusCode` com serialização (o `Content-Length` é sempre calculado), mas o servidor ainda não os usa. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fases 0 e 1 concluídas). O servidor aceita uma conexão, lê a requisição inteira em laço (limite de 8 KB), interpreta com o `HttpParser` (linha de requisição e cabeçalhos) e responde com `HttpResponse`: "Hello Citius!" (200) ou o status de erro certo (400, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Ainda não serve arquivos nem tem roteador. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -127,7 +127,7 @@ CitiusHTTP/
 └── docs/                     decisões de arquitetura (ADRs), benchmarks
 ```
 
-> O código atual ainda tem os headers soltos em `include/citius/`. A reorganização em subpastas acontece na Fase 1, de forma gradual.
+> O código atual ainda tem os headers soltos em `include/citius/`. A reorganização em subpastas ainda está pendente e será feita de forma gradual, uma camada por commit.
 
 ### Decisão de design importante: biblioteca + executável
 
@@ -241,7 +241,7 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 | Fase | Objetivo | Conceitos que você aprende |
 |---|---|---|
 | **0. Base saudável** ✅ | Corrigir bugs do código atual, `CMakeLists` modernizado (biblioteca + executável), namespace, `.clang-format`, primeiro teste | CMake, namespaces, testes |
-| **1. Núcleo de rede e parser** | Classe `Socket` RAII, `SO_REUSEADDR`, laço de leitura, parser completo da linha de requisição e cabeçalhos, `HttpResponse` com serialização | RAII, TCP como fluxo, `string_view`, parsing |
+| **1. Núcleo de rede e parser** ✅ | Classe `Socket` RAII, `SO_REUSEADDR`, laço de leitura, parser completo da linha de requisição e cabeçalhos, `HttpResponse` com serialização | RAII, TCP como fluxo, `string_view`, parsing |
 | **2. Arquivos estáticos** | Servir `www/`, tipos MIME, 404, proteção contra path traversal, `Content-Length` correto | Sistema de arquivos (`std::filesystem`), segurança |
 | **3. Roteamento** | `Router` com handlers registráveis (`router.get("/ping", ...)`), 405 Method Not Allowed | `std::function`, design de API |
 | **4. Concorrência** | Thread pool; tratamento de múltiplos clientes; encerramento gracioso | Threads, mutex, condition variable, sinais |

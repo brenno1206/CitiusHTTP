@@ -52,7 +52,7 @@ net/   Socket (RAII), Listener, Connection                  POSIX
 util/  Logger                                               transversal
 ```
 
-Estado atual: ainda é plano (`include/citius/*.hpp`, `src/*.cpp`). Migrar para subpastas de forma gradual, uma camada por commit, quando a fase pedir.
+Estado atual: ainda é plano (`include/citius/*.hpp`, `src/*.cpp`). Migrar para subpastas de forma gradual, uma camada por commit (tarefa à parte, ainda pendente).
 
 Regra de ouro: **`http/` nunca inclui headers de socket.** O parser recebe `std::string_view` e devolve estruturas; isso o torna testável sem rede.
 
@@ -98,16 +98,17 @@ Siga o estilo já existente no repositório:
 
 ## Estado atual e dívidas conhecidas
 
-Fase 0 concluída. **Fase 1 em andamento** (branch `feat/fase-1-rede-parser`): já existem `Socket` RAII move-only (`SO_REUSEADDR`, `SO_NOSIGPIPE`/`MSG_NOSIGNAL`, `send_all`, `recv_some`), `read_request_head` (lê até `\r\n\r\n` com limite; `Server` responde 431 se passar de 8 KB) e `main` captura exceções. `HttpParser::parse` (v2) já devolve `ParseResult` (requisição ou `ParseError`: 400/414/431/501/505), lê cabeçalhos (nomes em minúsculas, repetidos juntados com `", "`), valida versão, alvo e `Host` — mas o `Server` ainda **não o usa**. `StatusCode` (+ `reason_phrase`, `to_status(ParseError)`) e `HttpResponse` (`serialize()` calcula o `Content-Length`; `set_header` recusa CR/LF/NUL e `Content-Length`; `make_error`) já existem; regras de sintaxe compartilhadas ficam em `HttpSyntax.hpp`. Falta ligar tudo no `Server` (passo 6). Decisão: o parser nunca devolve 405 (depende do recurso; é do `Router`); método desconhecido é 501. `Server` ainda atende **um cliente por vez** e responde texto fixo 200; `HttpResponse.hpp` vazio; `www/` vazio; sem testes de integração com o `Server`.
+Fases 0 e 1 concluídas. `Socket` RAII move-only (`SO_REUSEADDR`, `SO_NOSIGPIPE`/`MSG_NOSIGNAL`, `send_all`, `recv_some`); `read_request_head` (lê até `\r\n\r\n`, limite de 8 KB); `HttpParser::parse` devolve `ParseResult` (requisição ou `ParseError` → 400/414/431/501/505), lê cabeçalhos (nomes em minúsculas, repetidos juntados com `", "`) e valida versão, alvo e `Host`; `StatusCode`, `to_status(ParseError)` e `HttpResponse` (`serialize()` calcula o `Content-Length`; `set_header` recusa CR/LF/NUL e `Content-Length`; `make_error`); regras de sintaxe compartilhadas em `HttpSyntax.hpp`. `Server` lê → parseia → responde (200 fixo "Hello Citius!" ou o status do erro, sempre com `Connection: close`) e atende **um cliente por vez**. Porta 0 = o SO escolhe (`Server::port()`), e `serve_one()` atende um cliente: é o que os testes de integração em `tests/integration/` usam (thread + cliente real). Decisão: o parser nunca devolve 405 (depende do recurso; é do `Router`); método desconhecido é 501. `www/` ainda vazio.
 
 Dívidas (resolver uma por commit, com teste quando possível):
 
-1. `Server::run`: ignora o parser e responde sempre 200 (passo 6); sem timeout de leitura (Fase 5); laço infinito sem encerramento gracioso (Fase 4); `accept` com erro não distingue `EINTR`.
-2. `Server::start` ainda cria o socket de escuta direto com `socket()`/`bind()`; mover para `net/` (`Listener`) na migração de pastas.
-3. `HttpParser` ignora o corpo e não trata `Content-Length`/`Transfer-Encoding` (Fase 5; ao tratar, rejeitar os dois juntos para evitar request smuggling).
-4. `CMakeLists.txt`: fontes listadas à mão (sem `GLOB`/lista por diretório) e sem `CMAKE_BUILD_TYPE` padrão.
-5. `std::format` na libc++ da Apple pode exigir deployment target recente (compila no Xcode 26.6; Linux não verificado).
-6. Código ainda não passou pelo `clang-format` (arquivo `.clang-format` existe; formatar numa mudança só de formatação).
+1. `Server`: sem timeout de leitura (Fase 5); `run()` sem encerramento gracioso (Fase 4); resposta 200 fixa até a Fase 2/3; um erro persistente em `accept` (ex.: falta de fds) faz `run()` girar em laço apertado; sem *lingering close* (cliente que ainda envia dados quando respondemos 431 pode receber RST em vez da resposta).
+2. Logs usam `std::cout` direto (sem buffer de linha fora de terminal); virar `Logger` na Fase 6.
+3. `Server::start` ainda cria o socket de escuta direto com `socket()`/`bind()`; mover para `net/` (`Listener`) na migração de pastas.
+4. `HttpParser` ignora o corpo e não trata `Content-Length`/`Transfer-Encoding` (Fase 5; ao tratar, rejeitar os dois juntos para evitar request smuggling).
+5. `CMakeLists.txt`: fontes listadas à mão (sem `GLOB`/lista por diretório) e sem `CMAKE_BUILD_TYPE` padrão.
+6. `std::format` na libc++ da Apple pode exigir deployment target recente (compila no Xcode 26.6; Linux não verificado).
+7. Código ainda não passou pelo `clang-format` (arquivo `.clang-format` existe; formatar numa mudança só de formatação).
 
 ## Testes
 
