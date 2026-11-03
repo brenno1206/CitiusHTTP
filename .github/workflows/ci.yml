@@ -103,3 +103,13 @@ jobs:
                   print(e["file"])
           PY
           xargs clang-tidy -p build --quiet < files.txt
+
+  # Regra de camadas: cada grupo de include/ e src/ só inclui os de baixo, e http/parse/routing/files
+  # nunca incluem headers de socket (scripts/check-layers.sh).
+  layers:
+    name: camadas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-layers.sh

@@ -4,7 +4,7 @@
 
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção (Fases 0 a 8 concluídas). O servidor atende todos os clientes numa thread só, com um event loop (`kqueue`/`epoll`; acima de `--max-connections` responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fases 0 a 8 concluídas, mais uma rodada de dívidas técnicas). Um event loop de uma thread (`kqueue`/`epoll`) atende todos os clientes, com keep-alive, prazos por conexão (leitura total, ociosidade, escrita), *lingering close*, backoff do `accept` e `503` acima de `--max-connections`. O HTTP é estrito: `Content-Length` e `Transfer-Encoding: chunked` (decodificado, sem brecha de *request smuggling*), `Expect: 100-continue`, limites de tamanho e os status 400, 408, 413, 414, 417, 431, 501 e 505. Serve arquivos de `www/` em streaming (sem limite de tamanho, com o caminho conferido no descritor contra path traversal e TOCTOU), tem `Router` com 405/`Allow`, log em arquivo com rotação e configuração por linha de comando ou arquivo. Código em grupos (`util`, `net`, `http`, `parse`, `routing`, `files`, `server`) com a regra de camadas verificada no CI, ~470 testes (unitários e de integração) e CI em macOS e Linux. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -90,24 +90,30 @@ Tudo o que o projeto faz é construir, com qualidade, o caminho entre esses dois
 
 ## 3. Arquitetura
 
-O código é dividido em **camadas**. Cada camada só conhece a de baixo, nunca a de cima. Isso permite testar o parser sem abrir rede e trocar a estratégia de concorrência sem mexer no HTTP.
+O código é dividido em **camadas**. Cada camada só conhece a de baixo, nunca a de cima. Isso permite testar o parser sem abrir rede e trocar a estratégia de concorrência sem mexer no HTTP. A regra é **verificada**: `scripts/check-layers.sh` (roda no CI) falha se um grupo incluir um de cima, ou se `http/`, `parse/`, `routing/` ou `files/` incluírem um header de socket.
 
 ```
 ┌─────────────────────────────────────────────┐
 │  main.cpp        (monta e liga as peças)    │
 ├─────────────────────────────────────────────┤
-│  core/   Server, Connection, Config         │  orquestração
+│  server/   Server, Connection, Config       │  orquestração
 ├─────────────────────────────────────────────┤
-│  http/   Request, Response, Parser,         │  regras do protocolo
-│          Router, StatusCode, Mime           │  (sem nenhuma chamada de rede)
+│  files/    StaticFiles, StaticOpen, Mime    │  regras do protocolo e dos
+│  routing/  Router                           │  arquivos (nenhuma chamada
+│  parse/    HttpParser, RequestAssembler,    │  de rede)
+│            ChunkedDecoder                   │
+│  http/     Request, Response, StatusCode    │
 ├─────────────────────────────────────────────┤
-│  net/    Socket (RAII), Poller, Listener    │  sistema operacional / POSIX
+│  net/      Socket, Listener, Poller         │  sistema operacional / POSIX
 ├─────────────────────────────────────────────┤
-│  util/   Logger                             │  transversal
+│  util/     Logger, RotatingFile,            │  transversal
+│            FileDescriptor, AsciiText        │
 └─────────────────────────────────────────────┘
 ```
 
-### Estrutura de pastas alvo
+### Estrutura de pastas
+
+Cada grupo tem a mesma pasta em `include/citius/`, `src/` e `tests/unit/`, e o seu próprio `CMakeLists.txt` com a lista dos arquivos.
 
 ```
 CitiusHTTP/
@@ -117,20 +123,23 @@ CitiusHTTP/
 ├── .clang-format             estilo de código automático
 ├── .clang-tidy               análise estática
 ├── .github/workflows/        CI (GitHub Actions)
-├── include/citius/           headers públicos
-│   ├── net/                  Socket.hpp, Poller.hpp, Listener.hpp
-│   ├── http/                 HttpRequest.hpp, HttpResponse.hpp, HttpParser.hpp,
-│   │                         Router.hpp, StatusCode.hpp, Mime.hpp
-│   ├── core/                 Server.hpp, Connection.hpp, ThreadPool.hpp, Config.hpp
-│   └── util/                 Logger.hpp
+├── scripts/                  check-layers.sh (regra de camadas)
+├── include/citius/           headers públicos, um grupo por pasta
+│   ├── util/                 Logger, RotatingFile, FileDescriptor, AsciiText
+│   ├── net/                  Socket, Listener, Poller
+│   ├── http/                 HttpRequest, HttpResponse, HttpSyntax, StatusCode
+│   ├── parse/                HttpParser, RequestAssembler, ChunkedDecoder
+│   ├── routing/              Router
+│   ├── files/                StaticFiles, StaticOpen, StaticPath, Mime
+│   └── server/               Server, Connection, Config, ThreadPool
 ├── src/                      implementações (.cpp) espelhando include/
 │   └── main.cpp
-├── tests/                    testes unitários e de integração
+├── tests/
+│   ├── unit/<grupo>/         testes unitários (sem rede), espelhando src/
+│   └── integration/          sobe o servidor numa porta efêmera e conecta de verdade
 ├── www/                      arquivos estáticos servidos (index.html, style.css)
 └── docs/                     adr/ (decisões de arquitetura) e benchmarks.md
 ```
-
-> O código atual ainda tem os headers soltos em `include/citius/`. A reorganização em subpastas ainda está pendente e será feita de forma gradual, uma camada por commit.
 
 ### Decisão de design importante: biblioteca + executável
 
@@ -169,6 +178,10 @@ Esta é a lista do que o projeto vai usar, o que significa e por quê.
 | **Proteção contra path traversal** | Normalizar o caminho e garantir que ele fica dentro de `www/`. |
 | **Respostas de erro corretas** | 400 (requisição inválida), 404, 405, 413, 431, 505 etc., conforme as RFCs. |
 | **Encerramento gracioso** | `SIGINT`/`SIGTERM` param de aceitar clientes, terminam os em andamento e liberam tudo. |
+| **Fechamento *lingering*** | Depois de uma resposta que fecha a conexão, o servidor manda o FIN e continua lendo até o cliente fechar: fechar de uma vez com dados por ler gera um RST que apaga a resposta. |
+| **Backoff do `accept`** | Sem descritores (`EMFILE`), o servidor para de vigiar o socket de escuta por um tempo crescente em vez de travar ou girar em 100% de CPU. |
+| **Request smuggling** | `chunked` estrito (CRLF obrigatório, hex puro, limites) e qualquer ambiguidade entre `Content-Length` e `Transfer-Encoding` é 400. |
+| **Validação no descritor** | O arquivo é aberto e o caminho **real** do descritor é conferido contra `www/`: sem janela TOCTOU, e `O_NONBLOCK` evita travar num FIFO. |
 
 ### 4.3 Concorrência
 
@@ -176,7 +189,7 @@ Evolução planejada, de simples a avançado:
 
 1. ~~**Sequencial**: um cliente por vez.~~ (`serve_one()` ainda existe, usado nos testes)
 2. ~~**Thread pool** com fila de tarefas (`std::jthread`, `std::mutex`, `std::condition_variable`)~~ (Fase 4; o `ThreadPool` continua na biblioteca, mas o `Server` não o usa mais: com keep-alive, cada conexão aberta prendia uma thread até fechar).
-3. **Event loop** com `kqueue` (macOS) / `epoll` (Linux) atrás de uma interface comum (`Poller`) ✅ (hoje). Uma thread atende milhares de conexões; com 3000 clientes simultâneos o thread pool respondia 503 a praticamente todos e o loop atende todos (ver [docs/benchmarks.md](docs/benchmarks.md)). O custo: um handler lento, como ler um arquivo grande, atrasa todos; o próximo passo possível é entregar esses handlers a um pool.
+3. **Event loop** com `kqueue` (macOS) / `epoll` (Linux) atrás de uma interface comum (`Poller`) ✅ (hoje). Uma thread atende milhares de conexões; com 3000 clientes simultâneos o thread pool respondia 503 a praticamente todos e o loop atende todos (ver [docs/benchmarks.md](docs/benchmarks.md)). Para um download grande não atrasar os demais, os arquivos vão em streaming (pedaços de 64 KB, [ADR 0006](docs/adr/0006-arquivos-estaticos-em-streaming.md)); um handler lento de verdade ainda atrasaria todos, e o caminho possível é entregá-los a um pool.
 
 ### 4.4 Engenharia e processo
 
@@ -232,9 +245,29 @@ Opções de linha de comando (`./build/citius_server --help` mostra a lista comp
 | `--port N` | porta TCP (0 = o SO escolhe) | 8080 |
 | `--root PASTA` | pasta dos arquivos públicos | `www` |
 | `--max-connections N` | conexões abertas ao mesmo tempo; acima disso, 503 | 4096 |
+| `--max-requests N` | requisições por conexão keep-alive antes de fechá-la | 1000 |
 | `--read-timeout-ms N` | prazo para a requisição chegar inteira (não é por leitura); estourou, 408 | 10000 |
 | `--idle-timeout-ms N` | espera da próxima requisição numa conexão keep-alive | 5000 |
 | `--log-level NIVEL` | `debug`, `info`, `warn` ou `error` | `info` |
+| `--log-file ARQUIVO` | escreve o log neste arquivo, com rotação, em vez de no console | console |
+| `--log-max-bytes N` | tamanho a partir do qual o arquivo de log rotaciona (1024 a 1 GiB) | 10 MB |
+| `--log-keep N` | arquivos de log antigos guardados (`app.log.1` ...) | 5 |
+| `--config ARQUIVO` | lê as opções de um arquivo (veja abaixo); a linha de comando vence | — |
+
+Em vez da linha de comando, as mesmas opções podem vir de um arquivo (`./build/citius_server --config citius.conf`). O formato é
+`chave = valor` (o nome da opção sem o `--`), com linhas em branco e comentários `#` no início da linha. **Precedência: padrões < arquivo
+< linha de comando**, qualquer que seja a ordem dos argumentos:
+
+```
+# citius.conf
+port = 9090
+root = site
+max-connections = 2000
+log-level = info
+log-file = /var/log/citius.log
+log-max-bytes = 5242880
+log-keep = 3
+```
 
 Cada linha de log tem hora e nível (`2026-11-03 14:20:01 [INFO] ...`); com `--log-level debug` aparece também uma linha por requisição (`GET /ping -> 200`). Códigos de saída: 0 sucesso, 1 falha ao iniciar (ex.: porta ocupada), 2 argumento inválido.
 
@@ -271,14 +304,22 @@ cenários e limitações em [docs/benchmarks.md](docs/benchmarks.md):
 | 1000 conexões | 84.303 req/s, 214 mil respostas 503 | **263.246 req/s**, nenhuma falha |
 | 3000 conexões | 15.280 req/s, quase tudo 503 | **234.142 req/s**, nenhuma falha |
 
-O custo da decisão: servir arquivo estático ficou ~2× mais lento (um handler de disco agora ocupa a
-thread única do loop). O raciocínio está em [docs/adr/0003](docs/adr/0003-event-loop-em-vez-de-thread-pool.md).
+Na Fase 7 servir arquivo estático ficou ~2× mais lento (o disco passou a rodar na thread única do loop). Isso foi
+corrigido com streaming e validação no descritor ([ADR 0006](docs/adr/0006-arquivos-estaticos-em-streaming.md)):
+
+| Arquivo estático | Fase 8 | Hoje |
+|---|---|---|
+| `index.html` (~0,5 KB), 64 conexões | 25 mil req/s | **58 mil req/s** |
+| arquivo de 5 MB, 16 conexões | 312 MB/s | **8 GB/s** |
+| arquivo de 25 MB | `500` (limite de 10 MB) | servido, íntegro |
+
+O raciocínio original está em [docs/adr/0003](docs/adr/0003-event-loop-em-vez-de-thread-pool.md).
 
 ### Qualidade e CI
 
 Todo push roda o [CI](.github/workflows/ci.yml): compila com warnings como erro e testa em macOS (Apple
-Clang) e Ubuntu (gcc e clang), roda ASan+UBSan e ThreadSanitizer, confere o `clang-format` e roda o
-`clang-tidy` (zero achados). Para repetir localmente, use as mesmas versões fixadas no CI:
+Clang) e Ubuntu (gcc e clang), roda ASan+UBSan e ThreadSanitizer, confere o `clang-format`, roda o
+`clang-tidy` (zero achados, incluindo `misc-include-cleaner`) e confere a regra de camadas (`scripts/check-layers.sh`). Para repetir localmente, use as mesmas versões fixadas no CI:
 
 ```bash
 pip install clang-format==23.1.3 clang-tidy==23.1.4        # ou: brew install llvm

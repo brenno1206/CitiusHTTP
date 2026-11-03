@@ -11,23 +11,15 @@ FetchContent_MakeAvailable(googletest)
 
 include(GoogleTest)
 
-add_executable(citius_tests
-    unit/HttpParserTest.cpp
-    unit/LoggerTest.cpp
-    unit/ConfigTest.cpp
-    unit/HttpRequestTest.cpp
-    unit/HttpResponseTest.cpp
-    unit/MimeTest.cpp
-    unit/StaticPathTest.cpp
-    unit/StaticFilesTest.cpp
-    unit/RouterTest.cpp
-    unit/ThreadPoolTest.cpp
-    unit/SocketTest.cpp
-    unit/PollerTest.cpp
-    unit/RequestAssemblerTest.cpp
-    unit/ConnectionTest.cpp
-    integration/ServerTest.cpp
-)
+# Cada grupo de tests/unit lista os proprios testes no CMakeLists.txt da sua pasta (espelham src/)
+add_executable(citius_tests integration/ServerTest.cpp)
+add_subdirectory(unit/util)
+add_subdirectory(unit/net)
+add_subdirectory(unit/http)
+add_subdirectory(unit/parse)
+add_subdirectory(unit/routing)
+add_subdirectory(unit/files)
+add_subdirectory(unit/server)
 set_target_properties(citius_tests PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(citius_tests PRIVATE citius_core GTest::gtest_main)
 target_compile_options(citius_tests PRIVATE ${CITIUS_WARNINGS})

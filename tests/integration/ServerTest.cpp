@@ -1,8 +1,9 @@
-#include "citius/Server.hpp"
-#include "citius/Socket.hpp"
+#include "citius/server/Server.hpp"
+#include "citius/net/Socket.hpp"
 #include <arpa/inet.h>
 #include <array>
 #include <chrono>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -13,6 +14,7 @@
 #include <string>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <thread>
 #include <unistd.h>
@@ -482,6 +484,185 @@ TEST(ServerConcorrenciaTest, QuinhentasConexoesAbertasAoMesmoTempoSaoTodasAtendi
     }
 }
 
+namespace {
+
+// Esgota os descritores do processo de forma controlada e devolve tudo no destrutor (mesmo se o teste falhar).
+class SemDescritores {
+public:
+    // Abaixa o limite para poucos fds acima do maior aberto hoje (assim o preenchimento e rapido) e ocupa todos os
+    // que sobrarem abrindo /dev/null. Depois disso, qualquer socket()/accept()/open() no processo falha com EMFILE.
+    SemDescritores() {
+        ::getrlimit(RLIMIT_NOFILE, &m_original);
+        int maior = 0;
+        for (int fd = 0; fd < 4096; ++fd) {
+            if (::fcntl(fd, F_GETFD) != -1) maior = fd;
+        }
+        rlimit baixo = m_original;
+        baixo.rlim_cur = static_cast<rlim_t>(maior) + 40;
+        ::setrlimit(RLIMIT_NOFILE, &baixo);
+        for (;;) {
+            const int fd = ::open("/dev/null", O_RDONLY);
+            if (fd < 0) break;
+            m_ocupados.emplace_back(fd);
+        }
+    }
+
+    ~SemDescritores() {
+        devolver();
+    }
+
+    SemDescritores(const SemDescritores&) = delete;
+    SemDescritores& operator=(const SemDescritores&) = delete;
+
+    // Fecha os descritores ocupados e restaura o limite original.
+    void devolver() {
+        m_ocupados.clear();
+        ::setrlimit(RLIMIT_NOFILE, &m_original);
+    }
+
+private:
+    rlimit m_original{};
+    std::vector<Socket> m_ocupados; // Socket fecha o fd no destrutor
+};
+
+} // namespace
+
+// Antes um erro de accept dormia 10 ms COM O LOOP BLOQUEADO e tentava de novo, atrasando todos os clientes e
+// enchendo o log. Agora o servidor para de vigiar o socket de escuta por um tempo (backoff) e volta sozinho; as
+// conexoes ja abertas seguem normais. Obs.: o que acontece com o cliente que tentou conectar DURANTE a falta de
+// descritores depende do SO (no macOS o kernel ja descartou a conexao ao falhar o accept; no Linux ela espera na
+// fila), por isso o teste nao exige nada dele: exige que um cliente que chega DEPOIS seja atendido.
+TEST(ServerConcorrenciaTest, FaltaDeDescritoresNaoTravaAsConexoesAbertasEOServidorSeRecupera) {
+    ServidorEmExecucao exec;
+    Socket aberta = conectar(exec.server.port()); // ja aceita e em keep-alive
+    ASSERT_TRUE(aberta.send_all(kGetIndex));
+    std::array<char, 4096> buffer;
+    ASSERT_GT(aberta.recv_some(buffer), 0);
+
+    Socket intruso{::socket(AF_INET, SOCK_STREAM, 0)}; // criado antes de acabarem os descritores
+    ASSERT_TRUE(intruso.valid());
+    sockaddr_in endereco{};
+    endereco.sin_family = AF_INET;
+    endereco.sin_port = htons(exec.server.port());
+    ::inet_pton(AF_INET, "127.0.0.1", &endereco.sin_addr);
+
+    {
+        SemDescritores sem_fds;
+        // o connect nao precisa de fd novo; ja o accept do servidor falha com EMFILE e ele entra em backoff
+        (void)::connect(intruso.get(), reinterpret_cast<const sockaddr*>(&endereco), sizeof(endereco));
+        esperar(300);
+
+        // a conexao que ja estava aberta continua sendo atendida durante a falta de descritores
+        const auto inicio = std::chrono::steady_clock::now();
+        ASSERT_TRUE(aberta.send_all(kGetIndex));
+        ASSERT_GT(aberta.recv_some(buffer), 0);
+        EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(500));
+
+        sem_fds.devolver(); // volta a haver descritores
+    }
+
+    // o servidor retoma o accept sozinho e atende quem chega depois (o prazo de 5 s cobre o backoff maximo)
+    const std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+}
+
+// A fila de prazos agenda cada conexao uma vez por periodo de timeout e reagenda quando o prazo e ADIADO. Se esse
+// reagendamento falhasse, uma conexao ativa seria fechada pela ociosidade no meio do uso.
+TEST(ServerConcorrenciaTest, ConexaoAtivaNaoEFechadaPelaOciosidade) {
+    ServidorEmExecucao exec;
+    // prazo de 300 ms contra pausas de 40 ms: sobra folga para uma VM de CI engasgar sem que a conexao fique, de fato,
+    // 300 ms parada (um prazo apertado aqui daria falha por lentidao do ambiente, nao por defeito do servidor)
+    exec.server.set_idle_timeout(std::chrono::milliseconds(300));
+    Socket cliente = conectar(exec.server.port());
+    std::array<char, 4096> buffer;
+
+    // 30 requisicoes a cada ~40 ms = ~1,2 s: 4x o prazo de ociosidade, mas nunca 300 ms seguidos parada
+    for (int i = 0; i < 30; ++i) {
+        ASSERT_TRUE(cliente.send_all(kGetIndex)) << "requisicao " << i;
+        const ssize_t n = cliente.recv_some(buffer);
+        ASSERT_GT(n, 0) << "a conexao ativa foi fechada na requisicao " << i;
+        esperar(40);
+    }
+
+    // parou de usar: agora a ociosidade fecha (em silencio)
+    EXPECT_EQ(cliente.recv_some(buffer), 0);
+}
+
+TEST(ServerConcorrenciaTest, PrazosDeCentenasDeConexoesVencemTodosNoTempo) {
+    constexpr int kClientes = 300;
+    if (!elevar_limite_de_fds(2 * kClientes + 100)) GTEST_SKIP() << "nao foi possivel subir o limite de descritores";
+    ServidorEmExecucao exec;
+    exec.server.set_idle_timeout(std::chrono::milliseconds(150));
+    std::vector<Socket> clientes;
+    clientes.reserve(kClientes);
+    for (int i = 0; i < kClientes; ++i) clientes.push_back(conectar(exec.server.port()));
+    std::array<char, 4096> buffer;
+    for (auto& cliente : clientes) {
+        ASSERT_TRUE(cliente.send_all(kGetIndex));
+        ASSERT_GT(cliente.recv_some(buffer), 0);
+    }
+
+    // todas ficam ociosas; todas devem ser fechadas pelo servidor logo depois do prazo
+    const auto inicio = std::chrono::steady_clock::now();
+    for (int i = 0; i < kClientes; ++i) EXPECT_EQ(clientes[i].recv_some(buffer), 0) << "cliente " << i;
+    EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(1000));
+}
+
+namespace {
+
+// Arquivo de teste com padrao previsivel dentro da raiz do servidor de teste (criado sob demanda, so por quem o usa).
+std::string criar_arquivo_grande(const std::string& nome, std::size_t tamanho) {
+    std::string dados(tamanho, '\0');
+    for (std::size_t i = 0; i < tamanho; ++i) dados[i] = static_cast<char>((i * 7) % 253);
+    std::ofstream{raiz_de_teste() / nome, std::ios::binary} << dados;
+    return dados;
+}
+
+} // namespace
+
+// Antes o arquivo era lido INTEIRO para a memoria (limite de 10 MB, 500 acima disso) dentro do loop de uma thread so.
+TEST(ServerTest, ArquivoGrandeChegaIntegroEmStreaming) {
+    const std::string dados =
+        criar_arquivo_grande("download.bin", 25 * 1024 * 1024 + 17); // 25 MB: acima do antigo limite
+    Server server{0, raiz_de_teste()};
+
+    std::string resposta = requisitar(server, "GET /download.bin HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+    ASSERT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta.substr(0, 200);
+    EXPECT_NE(resposta.find("Content-Length: " + std::to_string(dados.size()) + "\r\n"), std::string::npos);
+    const std::size_t corpo = resposta.find("\r\n\r\n") + 4;
+    ASSERT_EQ(resposta.size() - corpo, dados.size());
+    EXPECT_TRUE(resposta.compare(corpo, std::string::npos, dados) == 0) << "o conteudo recebido difere do arquivo";
+}
+
+// O ponto da mudanca: um download lento nao pode atrasar os outros clientes, porque o loop so envia o que o socket
+// aceita e volta a atender os demais (antes, ler o arquivo inteiro e enviar prendia o loop).
+TEST(ServerConcorrenciaTest, DownloadLentoNaoAtrasaOsOutrosClientes) {
+    (void)criar_arquivo_grande("lento.bin", 16 * 1024 * 1024);
+    ServidorEmExecucao exec;
+    Socket lento = conectar(exec.server.port());
+    ASSERT_TRUE(lento.send_all("GET /lento.bin HTTP/1.1\r\nHost: x\r\n\r\n"));
+    std::array<char, 4096> buffer;
+    ASSERT_GT(lento.recv_some(buffer), 0); // comecou a baixar; agora o cliente "para de ler" (o buffer do socket enche)
+    esperar(200);
+
+    const auto inicio = std::chrono::steady_clock::now();
+    const std::string rapida = requisitar_em(exec.server.port(), kGetIndex);
+
+    EXPECT_TRUE(comeca_com(rapida, "HTTP/1.1 200 OK\r\n")) << rapida;
+    EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(500));
+}
+
+TEST(ServerTest, FifoDentroDaRaizDa404SemTravarOServidor) {
+    ASSERT_EQ(::mkfifo((raiz_de_teste() / "pipe").c_str(), 0600), 0);
+    Server server{0, raiz_de_teste()};
+
+    // um open() comum num FIFO sem escritor trava para sempre: aqui tem de voltar na hora
+    std::string resposta = requisitar(server, "GET /pipe HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 404 Not Found\r\n")) << resposta;
+}
+
 TEST(ServerConcorrenciaTest, SlowlorisComUmByteDeVezEmQuandoRecebe408NoPrazoTotal) {
     ServidorEmExecucao exec;
     exec.server.set_read_timeout(std::chrono::milliseconds(300));
@@ -519,13 +700,28 @@ TEST(ServerTest, ClienteMudoRecebe408ELiberaAThread) {
 TEST(ServerTest, ClienteMudoLiberaAUnicaVagaDeConexaoDepoisDoTimeout) {
     ServidorEmExecucao exec{1};
     exec.server.set_read_timeout(std::chrono::milliseconds(100));
+    exec.server.set_linger_timeout(std::chrono::milliseconds(150));
     Socket mudo = conectar(exec.server.port());
 
-    // a unica vaga esta com o cliente mudo; depois do timeout (408) ela volta e o proximo e atendido
-    esperar(300);
+    // a unica vaga esta com o cliente mudo: apos o timeout (408) a conexao ainda espera o cliente fechar
+    // (lingering), e como o mudo nunca fecha, o servidor desiste apos o prazo de lingering e a vaga volta
+    esperar(1000);
     std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+}
+
+TEST(ServerTest, ClienteQueFechaDepoisDoErroLiberaAVagaNaHora) {
+    ServidorEmExecucao exec{1};
+    exec.server.set_read_timeout(std::chrono::milliseconds(100));
+
+    {
+        Socket cliente = conectar(exec.server.port());
+        EXPECT_TRUE(comeca_com(ler_tudo(cliente), "HTTP/1.1 408 Request Timeout\r\n")); // le ate o FIN do servidor
+    } // o cliente fecha: o lingering termina na hora, sem esperar o prazo de 2 s
+
+    esperar(100);
+    EXPECT_TRUE(comeca_com(requisitar_em(exec.server.port(), kGetIndex), "HTTP/1.1 200 OK\r\n"));
 }
 
 // ---- corpo da requisicao ----
@@ -590,14 +786,78 @@ TEST(ServerTest, CorpoPrometidoMasNaoEnviadoDa408) {
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
 }
 
-TEST(ServerTest, TransferEncodingChunkedDa501) {
+TEST(ServerTest, TransferEncodingChunkedEDecodificado) {
     Server server{0, raiz_de_teste()};
     registrar_eco(server);
 
     std::string resposta = requisitar(
-        server, "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+        server,
+        "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nhello world")) << resposta;
+}
+
+TEST(ServerTest, ChunkedEnviadoEmPedacosLentos) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta =
+        requisitar(server, std::vector<std::string>{"POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Enc",
+                                                    "oding: chunked\r\n\r\n3\r\na", "bc\r\n3\r\ndef\r\n0", "\r\n\r\n"});
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nabcdef")) << resposta;
+}
+
+TEST(ServerTest, TransferEncodingGzipDa501) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\nlixo");
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 501 Not Implemented\r\n")) << resposta;
+}
+
+TEST(ServerTest, ChunkedMalformadoDa400) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    // LF sozinho no lugar do CRLF: a ambiguidade que o request smuggling explora
+    std::string resposta =
+        requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\nhello\r\n0\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 400 Bad Request\r\n")) << resposta;
+}
+
+TEST(ServerTest, Expect100ContinueRecebeOInterinoEDepoisAResposta) {
+    ServidorEmExecucao exec;
+    registrar_eco(exec.server);
+    Socket cliente = conectar(exec.server.port());
+    std::array<char, 4096> buffer;
+
+    // como o curl: manda so a cabeca e ESPERA o 100 antes de enviar o corpo
+    ASSERT_TRUE(cliente.send_all("POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"));
+    ssize_t n = cliente.recv_some(buffer);
+    ASSERT_GT(n, 0);
+    EXPECT_EQ(std::string(buffer.data(), static_cast<std::size_t>(n)), "HTTP/1.1 100 Continue\r\n\r\n");
+
+    ASSERT_TRUE(cliente.send_all("hello"));
+    n = cliente.recv_some(buffer);
+    ASSERT_GT(n, 0);
+    const std::string resposta(buffer.data(), static_cast<std::size_t>(n));
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nhello")) << resposta;
+}
+
+TEST(ServerTest, ExpectDesconhecidoDa417) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta =
+        requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 200-ok\r\n\r\nhello");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 417 Expectation Failed\r\n")) << resposta;
 }
 
 TEST(ServerTest, TransferEncodingMaisContentLengthDa400) {
@@ -792,18 +1052,33 @@ TEST(ServerKeepAliveTest, OciosidadeLiberaAUnicaVagaDeConexaoParaOutroCliente) {
 }
 
 TEST(ServerKeepAliveTest, ConexaoFechaNoLimiteDeRequisicoes) {
+    constexpr std::size_t kLimite = 7;
     ServidorEmExecucao exec;
+    exec.server.set_max_requests_per_connection(kLimite);
     Socket cliente = conectar(exec.server.port());
     LeitorDeRespostas leitor{cliente};
 
-    for (std::size_t i = 1; i <= citius::kMaxRequestsPerConnection; ++i) {
+    for (std::size_t i = 1; i <= kLimite; ++i) {
         ASSERT_TRUE(cliente.send_all(kGetIndex));
         std::string resposta = leitor.proxima();
-        bool ultima = i == citius::kMaxRequestsPerConnection;
+        bool ultima = i == kLimite;
         EXPECT_NE(resposta.find(ultima ? "Connection: close\r\n" : "Connection: keep-alive\r\n"), std::string::npos)
             << "requisicao " << i << ": " << resposta;
     }
     EXPECT_TRUE(leitor.fechada());
+}
+
+TEST(ServerKeepAliveTest, LimitePadraoDeRequisicoesVemDaConstante) {
+    // sem set_max_requests_per_connection vale kMaxRequestsPerConnection; basta ver que uma sequencia longa passa
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    for (int i = 1; i <= 150; ++i) {
+        ASSERT_TRUE(cliente.send_all(kGetIndex));
+        ASSERT_NE(leitor.proxima().find("Connection: keep-alive\r\n"), std::string::npos) << "requisicao " << i;
+    }
+    static_assert(citius::kMaxRequestsPerConnection > 150, "o padrao precisa estar acima do que este teste envia");
 }
 
 TEST(ServerKeepAliveTest, PedidoDeParadaFechaConexoesOciosas) {
