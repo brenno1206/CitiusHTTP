@@ -10,7 +10,7 @@ namespace citius {
 namespace {
 
 // Opcoes que recebem valor. "--help" e tratada a parte (nao tem valor).
-constexpr std::array<std::string_view, 7> kOptions{"--port",         "--root",          "--threads",   "--max-queued",
+constexpr std::array<std::string_view, 6> kOptions{"--port", "--root", "--max-connections",
                                                    "--read-timeout-ms", "--idle-timeout-ms", "--log-level"};
 
 // Aceita so digitos: from_chars nao tolera espaco nem '+', e recusa '-' em tipo sem sinal.
@@ -44,12 +44,9 @@ std::optional<std::string> apply(Config& config, std::string_view name, std::str
     } else if (name == "--root") {
         if (value.empty()) return std::format("valor invalido para {}: o caminho esta vazio", name);
         config.root = value;
-    } else if (name == "--threads") {
-        if ((error = read_number(name, value, 0, 1024, number))) return error;
-        config.threads = static_cast<std::size_t>(number);
-    } else if (name == "--max-queued") {
+    } else if (name == "--max-connections") {
         if ((error = read_number(name, value, 1, 1'000'000, number))) return error;
-        config.max_queued = static_cast<std::size_t>(number);
+        config.max_connections = static_cast<std::size_t>(number);
     } else if (name == "--read-timeout-ms") {
         if ((error = read_number(name, value, 1, 3'600'000, number))) return error;
         config.read_timeout = std::chrono::milliseconds(number);
@@ -116,13 +113,12 @@ std::string config_usage(std::string_view program) {
         "Opcoes (cada uma aceita \"--opcao valor\" ou \"--opcao=valor\"):\n"
         "  --port N              porta TCP, 0 a 65535; 0 = o SO escolhe (padrao {})\n"
         "  --root PASTA          pasta dos arquivos publicos (padrao {})\n"
-        "  --threads N           threads que atendem clientes, ate 1024; 0 = uma por nucleo (padrao {})\n"
-        "  --max-queued N        clientes esperando uma thread, 1 a 1000000; acima disso, 503 (padrao {})\n"
-        "  --read-timeout-ms N   espera maxima por dados do cliente; estourou, 408 (padrao {})\n"
+        "  --max-connections N   conexoes abertas ao mesmo tempo, 1 a 1000000; acima disso, 503 (padrao {})\n"
+        "  --read-timeout-ms N   prazo para a requisicao chegar inteira; estourou, 408 (padrao {})\n"
         "  --idle-timeout-ms N   espera maxima da proxima requisicao numa conexao keep-alive (padrao {})\n"
         "  --log-level NIVEL     debug, info, warn ou error (padrao {})\n"
         "  -h, --help            mostra esta ajuda\n",
-        program, defaults.port, defaults.root.string(), defaults.threads, defaults.max_queued,
+        program, defaults.port, defaults.root.string(), defaults.max_connections,
         defaults.read_timeout.count(), defaults.idle_timeout.count(), "info");
 }
 

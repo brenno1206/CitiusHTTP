@@ -1,146 +1,77 @@
 #include "citius/Server.hpp"
-#include "citius/HttpParser.hpp"
 #include "citius/HttpResponse.hpp"
 #include "citius/Logger.hpp"
-#include "citius/RequestReader.hpp"
+#include "citius/Poller.hpp"
 #include "citius/StaticFiles.hpp"
-#include <arpa/inet.h>  // ntohs()
-#include "citius/ThreadPool.hpp"
 #include <algorithm>
+#include <arpa/inet.h>  // ntohs()
 #include <cerrno>
 #include <chrono>
-#include <exception>
 #include <format>
+#include <iterator>
 #include <memory>
 #include <netinet/in.h> // Para struct sockaddr_in, htons(), htonl()
-#include <optional>
-#include <poll.h>
 #include <stdexcept>    // Para lançar std::runtime_error
-#include <string>
-#include <string_view>
 #include <sys/socket.h> // Para socket(), bind(), listen()
 #include <thread>
+#include <unordered_map>
 #include <utility>      // std::move
 
 namespace citius {
 
 namespace {
 
-// Teto para linha de requisicao + cabecalhos; acima disso respondemos 431. 8 KB e um limite comum (ex.: nginx)
-constexpr std::size_t kMaxRequestHeadBytes = 8192;
+// De quanto em quanto tempo o loop acorda mesmo sem eventos: para notar request_stop() (que so grava
+// um atomic e nao consegue acordar o Poller) e para varrer os prazos das conexoes
+constexpr std::chrono::milliseconds kLoopTick{50};
 
-// De quanto em quanto tempo o laco de accept acorda para ver se pediram para parar
-constexpr int kAcceptPollMs = 100;
+// Quantos clientes aceitar por aviso do socket de escuta. Em rajadas isso poupa chamadas ao Poller;
+// o limite evita que uma enxurrada de conexoes novas segure o loop longe das que ja estao abertas
+// (o aviso e por nivel: se sobrar cliente na fila, o proximo wait() avisa de novo)
+constexpr int kAcceptBatch = 64;
 
-// Pausa depois de um erro persistente de accept/poll (ex.: sem fds), para nao girar em laco apertado
+// Pausa depois de um erro persistente de accept (ex.: sem fds, EMFILE), para nao girar em laco apertado
 constexpr auto kAcceptErrorPause = std::chrono::milliseconds(10);
 
-// Um handler com bug nao pode derrubar o servidor nem deixar o cliente sem resposta.
-HttpResponse route_safely(const Router& router, const HttpRequest& request) {
-    try {
-        return router.route(request);
-    } catch (const std::exception& e) {
-        log_error(std::format("Handler lancou excecao: {}", e.what()));
-    } catch (...) {
-        log_error("Handler lancou excecao desconhecida.");
-    }
-    return HttpResponse::make_error(StatusCode::INTERNAL_SERVER_ERROR);
-}
-
-HttpResponse close_with(StatusCode status) {
-    HttpResponse response = HttpResponse::make_error(status);
-    (void)response.set_header("Connection", "close");
-    return response;
-}
-
-// O que fazer depois de ler uma requisicao.
-struct Outcome {
-    std::optional<HttpResponse> response; ///< std::nullopt = nao ha a quem responder
-    bool keep_alive = false;              ///< true = esperar outra requisicao na mesma conexao
-    std::string surplus;                  ///< bytes ja lidos que pertencem a proxima requisicao
+// Uma conexao e o que o Poller foi mandado vigiar nela (para so chamar modify() quando mudar).
+struct Entry {
+    std::unique_ptr<Connection> conn;
+    Interest registered;
 };
 
-// Decide a resposta para o que foi lido do cliente. Le o corpo do socket quando a cabeca anuncia um
-// Content-Length. Todo erro fecha a conexao: depois dele nao sabemos mais onde a proxima requisicao
-// comeca, entao reaproveitar o fluxo seria arriscado.
-Outcome build_response(const ReadResult& head, Socket& client, const Router& router, bool may_keep_alive) {
-    switch (head.status) {
-        case ReadStatus::TOO_LARGE:
-            log_info("(cabecalhos grandes demais) -> 431");
-            return {close_with(StatusCode::HEADERS_TOO_LARGE), false, {}};
-        case ReadStatus::TIMEOUT:
-            log_info("(cliente parado) -> 408");
-            return {close_with(StatusCode::REQUEST_TIMEOUT), false, {}};
-        case ReadStatus::CLOSED:
-            // fim normal de uma conexao keep-alive: o cliente terminou e fechou
-            if (!head.data.empty()) log_debug("(conexao encerrada antes de completar a requisicao)");
-            return {};
-        case ReadStatus::ERROR:
-            log_debug("(erro de leitura)");
-            return {};
-        case ReadStatus::COMPLETE:
-            break;
-    }
+using ConnectionMap = std::unordered_map<int, Entry>;
 
-    // so a cabeca vai ao parser; o que veio depois dela e o comeco do corpo (ou da proxima requisicao)
-    const std::string_view data{head.data};
-    ParseResult parsed = HttpParser::parse(data.substr(0, head.head_size));
-    if (!parsed.ok()) {
-        StatusCode status = to_status(*parsed.error);
-        log_info(std::format("(requisicao invalida) -> {}", static_cast<int>(status)));
-        return {close_with(status), false, {}};
-    }
-
-    std::string surplus(data.substr(head.head_size));
-    if (parsed.request->content_length > 0) {
-        ReadResult body = read_request_body(client, surplus, parsed.request->content_length);
-        if (body.status == ReadStatus::TIMEOUT) {
-            log_info("(corpo incompleto, cliente parado) -> 408");
-            return {close_with(StatusCode::REQUEST_TIMEOUT), false, {}};
+// Depois de mexer numa conexao: acompanha o interesse dela no Poller.
+// @return false se ela fechou (ou nao da mais para vigiar) e deve ser descartada; o destrutor fecha o fd.
+bool sync_interest(Poller& poller, Entry& entry) {
+    if (entry.conn->closed()) return false;
+    const Interest wanted = entry.conn->interest();
+    if (wanted != entry.registered) {
+        if (!poller.modify(entry.conn->fd(), wanted)) {
+            log_debug("Falha ao atualizar o interesse da conexao no Poller.");
+            return false;
         }
-        if (body.status != ReadStatus::COMPLETE) {
-            log_debug("(conexao encerrada antes de completar o corpo)");
-            return {};
-        }
-        parsed.request->body = std::move(body.data);
-        surplus = std::move(body.surplus);
+        entry.registered = wanted;
     }
-
-    const bool keep_alive = may_keep_alive && parsed.request->keep_alive();
-    HttpResponse response = route_safely(router, *parsed.request);
-    // a RFC pede que o servidor avise quando vai fechar; "keep-alive" explicito tambem serve ao HTTP/1.0
-    (void)response.set_header("Connection", keep_alive ? "keep-alive" : "close");
-
-    log_debug(std::format("{} {} -> {}", method_name(parsed.request->method), parsed.request->path,
-                         static_cast<int>(response.status())));
-    return {std::move(response), keep_alive, std::move(surplus)};
+    return true;
 }
 
-// Espera chegar algo na conexao (a proxima requisicao, ou o fim dela). Faz poll em fatias curtas,
-// como accept_client, para notar o pedido de parada sem esperar o prazo todo.
-// @return true se ha dados para ler; false se estourou o prazo, pediram para parar ou deu erro.
-bool wait_for_next_request(const Socket& client, std::chrono::milliseconds idle, const std::atomic<bool>& stop) {
-    const auto deadline = std::chrono::steady_clock::now() + idle;
-    while (!stop.load()) {
-        auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-        if (left <= std::chrono::milliseconds::zero()) return false;
-
-        pollfd pfd{.fd = client.get(), .events = POLLIN, .revents = 0};
-        int ready = poll(&pfd, 1, static_cast<int>(std::min<std::chrono::milliseconds::rep>(left.count(), kAcceptPollMs)));
-        if (ready > 0) return true; // dados, ou POLLHUP/POLLERR: o proximo recv descobre qual
-        if (ready < 0 && errno != EINTR) return false;
-    }
-    return false;
+// O cliente passou do limite de conexoes: uma tentativa de avisar e adeus. Nao ha laco de envio
+// (a resposta e minuscula e cabe no buffer de um socket novo) nem espera: nada aqui pode bloquear o loop.
+void reject_busy(Socket client) {
+    HttpResponse busy = HttpResponse::make_error(StatusCode::SERVICE_UNAVAILABLE);
+    (void)busy.set_header("Retry-After", "1");
+    (void)busy.set_header("Connection", "close");
+    if (!client.set_no_sigpipe()) return;
+    (void)client.send_some(busy.serialize());
 }
 
 } // namespace
 
-Server::Server(std::uint16_t port, std::filesystem::path root, std::size_t threads, std::size_t max_queued)
-    : m_root(std::move(root)),
-      m_threads(threads != 0 ? threads : std::max<std::size_t>(2, std::thread::hardware_concurrency())),
-      m_max_queued(max_queued) {
-    if (max_queued == 0) {
-        throw std::invalid_argument("Server: max_queued deve ser maior que zero.");
+Server::Server(std::uint16_t port, std::filesystem::path root, std::size_t max_connections)
+    : m_root(std::move(root)), m_max_connections(max_connections) {
+    if (max_connections == 0) {
+        throw std::invalid_argument("Server: max_connections deve ser maior que zero.");
     }
     // captura a raiz por valor: o fallback nao pode depender do endereco do Server (que e movivel)
     m_router.set_fallback([root = m_root](const HttpRequest& request) { return serve_static(root, request); });
@@ -174,6 +105,12 @@ void Server::start(std::uint16_t port) {
         throw std::runtime_error("Falha no listen.");
     }
 
+    // nao bloqueante: o aviso de "ha cliente" do Poller pode ser falso (o cliente desiste entre o aviso e
+    // o accept), e um accept bloqueante nesse caso travaria o loop inteiro ate o proximo cliente
+    if(!m_server_socket.set_nonblocking()) {
+        throw std::runtime_error("Falha ao tornar o socket de escuta nao bloqueante.");
+    }
+
     // com porta 0 so agora o sistema sabe qual porta escolheu
     sockaddr_in bound{};
     socklen_t bound_size = sizeof(bound);
@@ -183,41 +120,6 @@ void Server::start(std::uint16_t port) {
     m_port = ntohs(bound.sin_port);
 
     log_info(std::format("Servidor escutando na porta {}...", m_port));
-}
-
-Socket Server::accept_client() {
-    while (!m_stop.load()) {
-        // poll com timeout em vez de accept bloqueante: assim request_stop() e notado em ate
-        // kAcceptPollMs, sem depender de um sinal interromper o accept (corrida entre checar e bloquear)
-        pollfd pfd{.fd = m_server_socket.get(), .events = POLLIN, .revents = 0};
-        int ready = poll(&pfd, 1, kAcceptPollMs);
-        if (ready == 0 || (ready < 0 && errno == EINTR)) {
-            continue;
-        }
-        if (ready < 0) {
-            log_error("Falha no poll do socket de escuta.");
-            return Socket{};
-        }
-
-        // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
-        int fd = accept(m_server_socket.get(), nullptr, nullptr);
-        if (fd < 0) {
-            if (errno == EINTR || errno == ECONNABORTED) {
-                continue; // sinal, ou o cliente desistiu antes do accept: tenta o proximo
-            }
-            log_error("Falha ao aceitar conexao.");
-            return Socket{};
-        }
-
-        Socket client{fd};
-        // SO_NOSIGPIPE e por socket: precisa ser definido em cada cliente aceito
-        if (!client.set_no_sigpipe()) {
-            log_warn("Falha ao definir SO_NOSIGPIPE no cliente.");
-            continue;
-        }
-        return client;
-    }
-    return Socket{};
 }
 
 void Server::set_read_timeout(std::chrono::milliseconds timeout) noexcept {
@@ -232,68 +134,111 @@ void Server::set_idle_timeout(std::chrono::milliseconds timeout) noexcept {
     }
 }
 
-void Server::handle_client(Socket& client) const {
-    // por socket (como o SO_NOSIGPIPE); sem isso um cliente mudo prenderia a thread para sempre
-    if (!client.set_recv_timeout(std::chrono::milliseconds(m_read_timeout_ms.load()))) {
-        log_warn("Falha ao definir o timeout de leitura no cliente.");
-    }
-
-    std::string carry; // bytes ja lidos que pertencem a proxima requisicao (requisicoes encadeadas)
-    for (std::size_t served = 0; served < kMaxRequestsPerConnection; ++served) {
-        // a primeira requisicao segue o timeout de leitura (silencio = 408). Nas seguintes, esperar
-        // calado e normal: nao ha requisicao a responder, so fechamos quando o prazo de ociosidade acaba
-        if (served > 0 && carry.empty() &&
-            !wait_for_next_request(client, std::chrono::milliseconds(m_idle_timeout_ms.load()), m_stop)) {
-            return;
-        }
-
-        const bool last = served + 1 == kMaxRequestsPerConnection || m_stop.load();
-        Outcome outcome = build_response(read_request_head(client, kMaxRequestHeadBytes, carry), client, m_router, !last);
-        if (outcome.response && !client.send_all(outcome.response->serialize())) {
-            log_debug("Falha ao enviar resposta.");
-            return;
-        }
-        if (!outcome.keep_alive) return;
-        carry = std::move(outcome.surplus);
-    }
-}
-
 void Server::serve_one() {
-    Socket client = accept_client();
-    if (client.valid()) {
-        handle_client(client);
-    }
-    // sem close(): o destrutor de 'client' fecha o fd ao sair da funcao
+    event_loop(true);
 }
 
 void Server::run() {
-    // o pool e local a run(): ao sair do escopo o destrutor deixa os clientes ja enfileirados
-    // terminarem e faz join, que e exatamente o encerramento gracioso
-    ThreadPool pool{m_threads, m_max_queued};
+    event_loop(false);
+}
 
-    while (!m_stop.load()) {
-        Socket client = accept_client();
-        if (!client.valid()) {
-            if (!m_stop.load()) {
+void Server::event_loop(bool single_client) {
+    using Clock = Connection::Clock;
+
+    Poller poller;
+    if (!poller.add(m_server_socket.get(), Interest::READ)) {
+        throw std::runtime_error("Falha ao registrar o socket de escuta no Poller.");
+    }
+
+    ConnectionMap connections;
+    bool accepting = true;
+    bool draining = false;
+    Clock::time_point next_sweep = Clock::now() + kLoopTick;
+    const Connection::Handler handler = [this](const HttpRequest& request) { return m_router.route(request); };
+
+    auto stop_accepting = [&] {
+        if (accepting) {
+            (void)poller.remove(m_server_socket.get());
+            accepting = false;
+        }
+    };
+
+    auto accept_pending = [&](Clock::time_point now) {
+        for (int i = 0; i < kAcceptBatch && accepting; ++i) {
+            // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
+            const int fd = accept(m_server_socket.get(), nullptr, nullptr);
+            if (fd < 0) {
+                if (errno == EINTR || errno == ECONNABORTED) continue; // sinal, ou o cliente desistiu: tenta o proximo
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return;   // fila de espera vazia
+                log_error("Falha ao aceitar conexao.");
                 std::this_thread::sleep_for(kAcceptErrorPause);
+                return;
             }
-            continue;
+
+            Socket client{fd};
+            if (connections.size() >= m_max_connections) {
+                log_warn("(limite de conexoes) -> 503");
+                reject_busy(std::move(client));
+                continue;
+            }
+
+            ConnectionOptions options;
+            options.read_timeout = std::chrono::milliseconds(m_read_timeout_ms.load());
+            options.idle_timeout = std::chrono::milliseconds(m_idle_timeout_ms.load());
+            auto conn = std::make_unique<Connection>(std::move(client), handler, now, options);
+            if (conn->closed()) continue;
+
+            const int conn_fd = conn->fd();
+            if (!poller.add(conn_fd, Interest::READ)) {
+                log_warn("Falha ao registrar o cliente no Poller.");
+                continue; // o destrutor de 'conn' fecha o fd
+            }
+            connections.emplace(conn_fd, Entry{std::move(conn), Interest::READ});
+            if (single_client) stop_accepting(); // serve_one atende um cliente so
+        }
+    };
+
+    while (true) {
+        if (m_stop.load() && !draining) {
+            // encerramento gracioso: nao aceita mais; conexao ociosa fecha na hora, as demais terminam a requisicao em curso
+            draining = true;
+            stop_accepting();
+            if (!single_client) log_info("Encerrando: esperando os clientes em andamento...");
+            for (auto it = connections.begin(); it != connections.end();) {
+                it->second.conn->close_when_idle();
+                it = sync_interest(poller, it->second) ? std::next(it) : connections.erase(it);
+            }
+        }
+        // sem aceitar mais (parada, ou o unico cliente de serve_one) e sem conexoes: acabou
+        if (!accepting && connections.empty()) break;
+
+        for (const PollEvent& event : poller.wait(kLoopTick)) {
+            const Clock::time_point now = Clock::now();
+
+            if (event.fd == m_server_socket.get()) {
+                if (accepting) accept_pending(now);
+                continue;
+            }
+            auto it = connections.find(event.fd);
+            if (it == connections.end()) continue;
+
+            Connection& conn = *it->second.conn;
+            if (event.readable) conn.on_readable(now);
+            // "closed" sem "writable" acontece quando o par some durante o envio: on_writable descobre pelo erro do send
+            if (!conn.closed() && (event.writable || event.closed)) conn.on_writable(now);
+            if (!sync_interest(poller, it->second)) connections.erase(it);
         }
 
-        // std::function exige tarefa copiavel e Socket e move-only: o shared_ptr carrega o cliente.
-        // Se o submit falhar, a tarefa e descartada mas nossa copia do ponteiro continua valida
-        auto shared = std::make_shared<Socket>(std::move(client));
-        if (!pool.submit([this, shared] { handle_client(*shared); })) {
-            log_warn("(fila cheia) -> 503");
-            HttpResponse busy = HttpResponse::make_error(StatusCode::SERVICE_UNAVAILABLE);
-            (void)busy.set_header("Retry-After", "1");
-            (void)busy.set_header("Connection", "close");
-            if (!shared->send_all(busy.serialize())) {
-                log_debug("Falha ao enviar resposta.");
+        // prazos: varredura periodica, nao a cada evento (com milhares de conexoes seria custo por evento)
+        const Clock::time_point now = Clock::now();
+        if (now >= next_sweep) {
+            next_sweep = now + kLoopTick;
+            for (auto it = connections.begin(); it != connections.end();) {
+                it->second.conn->check_deadline(now);
+                it = sync_interest(poller, it->second) ? std::next(it) : connections.erase(it);
             }
         }
     }
-    log_info("Encerrando: esperando os clientes em andamento...");
 }
 
 } // namespace citius
