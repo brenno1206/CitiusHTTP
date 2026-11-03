@@ -73,10 +73,10 @@ Outcome build_response(const ReadResult& head, Socket& client, const Router& rou
             return {close_with(StatusCode::REQUEST_TIMEOUT), false, {}};
         case ReadStatus::CLOSED:
             // fim normal de uma conexao keep-alive: o cliente terminou e fechou
-            if (!head.data.empty()) log_info("(conexao encerrada antes de completar a requisicao)");
+            if (!head.data.empty()) log_debug("(conexao encerrada antes de completar a requisicao)");
             return {};
         case ReadStatus::ERROR:
-            log_info("(erro de leitura)");
+            log_debug("(erro de leitura)");
             return {};
         case ReadStatus::COMPLETE:
             break;
@@ -99,7 +99,7 @@ Outcome build_response(const ReadResult& head, Socket& client, const Router& rou
             return {close_with(StatusCode::REQUEST_TIMEOUT), false, {}};
         }
         if (body.status != ReadStatus::COMPLETE) {
-            log_info("(conexao encerrada antes de completar o corpo)");
+            log_debug("(conexao encerrada antes de completar o corpo)");
             return {};
         }
         parsed.request->body = std::move(body.data);
@@ -111,7 +111,7 @@ Outcome build_response(const ReadResult& head, Socket& client, const Router& rou
     // a RFC pede que o servidor avise quando vai fechar; "keep-alive" explicito tambem serve ao HTTP/1.0
     (void)response.set_header("Connection", keep_alive ? "keep-alive" : "close");
 
-    log_info(std::format("{} {} -> {}", method_name(parsed.request->method), parsed.request->path,
+    log_debug(std::format("{} {} -> {}", method_name(parsed.request->method), parsed.request->path,
                          static_cast<int>(response.status())));
     return {std::move(response), keep_alive, std::move(surplus)};
 }
@@ -212,7 +212,7 @@ Socket Server::accept_client() {
         Socket client{fd};
         // SO_NOSIGPIPE e por socket: precisa ser definido em cada cliente aceito
         if (!client.set_no_sigpipe()) {
-            log_error("Falha ao definir SO_NOSIGPIPE no cliente.");
+            log_warn("Falha ao definir SO_NOSIGPIPE no cliente.");
             continue;
         }
         return client;
@@ -235,7 +235,7 @@ void Server::set_idle_timeout(std::chrono::milliseconds timeout) noexcept {
 void Server::handle_client(Socket& client) const {
     // por socket (como o SO_NOSIGPIPE); sem isso um cliente mudo prenderia a thread para sempre
     if (!client.set_recv_timeout(std::chrono::milliseconds(m_read_timeout_ms.load()))) {
-        log_error("Falha ao definir o timeout de leitura no cliente.");
+        log_warn("Falha ao definir o timeout de leitura no cliente.");
     }
 
     std::string carry; // bytes ja lidos que pertencem a proxima requisicao (requisicoes encadeadas)
@@ -250,7 +250,7 @@ void Server::handle_client(Socket& client) const {
         const bool last = served + 1 == kMaxRequestsPerConnection || m_stop.load();
         Outcome outcome = build_response(read_request_head(client, kMaxRequestHeadBytes, carry), client, m_router, !last);
         if (outcome.response && !client.send_all(outcome.response->serialize())) {
-            log_error("Falha ao enviar resposta.");
+            log_debug("Falha ao enviar resposta.");
             return;
         }
         if (!outcome.keep_alive) return;
@@ -284,12 +284,12 @@ void Server::run() {
         // Se o submit falhar, a tarefa e descartada mas nossa copia do ponteiro continua valida
         auto shared = std::make_shared<Socket>(std::move(client));
         if (!pool.submit([this, shared] { handle_client(*shared); })) {
-            log_info("(fila cheia) -> 503");
+            log_warn("(fila cheia) -> 503");
             HttpResponse busy = HttpResponse::make_error(StatusCode::SERVICE_UNAVAILABLE);
             (void)busy.set_header("Retry-After", "1");
             (void)busy.set_header("Connection", "close");
             if (!shared->send_all(busy.serialize())) {
-                log_error("Falha ao enviar resposta.");
+                log_debug("Falha ao enviar resposta.");
             }
         }
     }

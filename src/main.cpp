@@ -1,8 +1,9 @@
+#include "citius/Logger.hpp"
 #include "citius/Server.hpp"
 #include <atomic>
 #include <csignal>
 #include <exception>
-#include <iostream>
+#include <string>
 
 namespace {
 
@@ -44,9 +45,9 @@ int main(){
         install_stop_handlers();
         server.run();
         g_server = nullptr; // o servidor sai de escopo logo abaixo; o handler nao pode mais usa-lo
-        std::cout << "Servidor encerrado.\n";
+        citius::log_info("Servidor encerrado.");
     } catch (const std::exception& e) {
-        std::cerr << "Erro fatal: " << e.what() << '\n';
+        citius::log_error(std::string("Erro fatal: ") + e.what());
         return 1;
     }
     return 0;
