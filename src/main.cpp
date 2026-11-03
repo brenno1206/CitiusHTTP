@@ -1,6 +1,6 @@
-#include "citius/Config.hpp"
-#include "citius/Logger.hpp"
-#include "citius/Server.hpp"
+#include "citius/server/Config.hpp"
+#include "citius/server/Server.hpp"
+#include "citius/util/Logger.hpp"
 #include <algorithm>
 #include <atomic>
 #include <climits> // OPEN_MAX (macOS)

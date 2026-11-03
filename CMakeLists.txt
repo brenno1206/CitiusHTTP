@@ -27,36 +27,24 @@ option(CITIUS_SANITIZE "Compila com AddressSanitizer e UndefinedBehaviorSanitize
 # ThreadSanitizer (detecta corridas de dados): cmake -S . -B build-tsan -DCITIUS_TSAN=ON
 option(CITIUS_TSAN "Compila com ThreadSanitizer (nao combina com CITIUS_SANITIZE)" OFF)
 
-# Biblioteca com quase todo o código (sem main), reaproveitada pelo servidor e pelos testes
-add_library(citius_core STATIC
-    src/HttpParser.cpp
-    src/HttpResponse.cpp
-    src/Mime.cpp
-    src/StaticPath.cpp
-    src/StaticFiles.cpp
-    src/Router.cpp
-    src/ThreadPool.cpp
-    src/Logger.cpp
-    src/Config.cpp
-    src/Socket.cpp
-    src/RequestAssembler.cpp
-    src/Connection.cpp
-    src/Server.cpp
-)
-
-# Poller: kqueue no macOS, epoll no Linux (mesma interface em Poller.hpp)
-if(APPLE)
-    target_sources(citius_core PRIVATE src/PollerKqueue.cpp)
-else()
-    target_sources(citius_core PRIVATE src/PollerEpoll.cpp)
-endif()
+# Biblioteca com quase todo o código (sem main), reaproveitada pelo servidor e pelos testes.
+# Nasce vazia: cada grupo de src/ lista os proprios fontes no CMakeLists.txt da sua pasta, ao lado do
+# codigo (e nao numa lista unica aqui). Ao criar um arquivo novo, basta acrescenta-lo no da pasta dele.
+add_library(citius_core STATIC)
+add_subdirectory(src/util)
+add_subdirectory(src/net)
+add_subdirectory(src/http)
+add_subdirectory(src/parse)
+add_subdirectory(src/routing)
+add_subdirectory(src/files)
+add_subdirectory(src/server)
 
 # Padrao C++20 puro (sem extensoes GNU). PUBLIC: quem linka a biblioteca herda o requisito
 target_compile_features(citius_core PUBLIC cxx_std_20)
 set_target_properties(citius_core PROPERTIES CXX_EXTENSIONS OFF)
 
 # Incluindo o diretório de headers
-# #include "citius/Server.hpp"
+# #include "citius/server/Server.hpp"
 target_include_directories(citius_core PUBLIC include)
 
 # Habilitando os warnings do compilador para manter um código limpo

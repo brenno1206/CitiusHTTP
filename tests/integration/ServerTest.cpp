@@ -1,5 +1,5 @@
-#include "citius/Server.hpp"
-#include "citius/Socket.hpp"
+#include "citius/server/Server.hpp"
+#include "citius/net/Socket.hpp"
 #include <arpa/inet.h>
 #include <array>
 #include <chrono>
