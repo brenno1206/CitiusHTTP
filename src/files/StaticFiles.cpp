@@ -55,7 +55,10 @@ std::string read_small(const FileDescriptor& file, std::size_t size) {
 
 } // namespace
 
-HttpResponse serve_static(const std::filesystem::path& root, const HttpRequest& request) {
+StaticRoot::StaticRoot(std::filesystem::path root)
+    : m_path(std::move(root)), m_canonical(canonical_static_root(m_path)) {}
+
+HttpResponse serve_static(const StaticRoot& root, const HttpRequest& request) {
     if (request.method != HttpMethod::GET) {
         HttpResponse response = HttpResponse::make_error(StatusCode::METHOD_NOT_ALLOWED);
         (void)response.set_header("Allow", "GET"); // a RFC 9110 exige o Allow em 405
@@ -67,7 +70,10 @@ HttpResponse serve_static(const std::filesystem::path& root, const HttpRequest& 
         return HttpResponse::make_error(StatusCode::BAD_REQUEST);
     }
 
-    OpenedFile opened = open_static_file(root, *decoded);
+    if (!root.canonical()) {
+        return HttpResponse::make_error(StatusCode::NOT_FOUND);
+    }
+    OpenedFile opened = open_static_file(root.path(), *root.canonical(), *decoded);
     if (opened.status != OpenStatus::OK) {
         return error_for(opened.status);
     }
@@ -80,6 +86,10 @@ HttpResponse serve_static(const std::filesystem::path& root, const HttpRequest& 
         response.set_file_body(std::move(opened.file), opened.size, content_type);
     }
     return response;
+}
+
+HttpResponse serve_static(const std::filesystem::path& root, const HttpRequest& request) {
+    return serve_static(StaticRoot{root}, request);
 }
 
 } // namespace citius

@@ -98,3 +98,33 @@ Comparação final, três rodadas alternadas de cada servidor (`/ping`, 6 s por 
 Observações: o *lingering close* continua valendo (evita o RST que apagaria um 400/408/431/503 de um cliente ainda
 enviando; há teste), mas **não** era a causa destes erros. A diferença entre rodadas isoladas chega a ±10%: compare
 sempre rodadas alternadas, nunca uma única medição.
+
+## Arquivos estáticos em streaming (perda da Fase 7 recuperada)
+
+A Fase 7 deixou o `serve_static` ~2× mais lento (24,5 mil req/s contra 48,7 mil do thread pool): ele lia o arquivo
+inteiro para a memória, e agora isso roda na thread única do loop. A correção tem quatro partes:
+
+1. **Streaming:** arquivos acima de 64 KB não são lidos para a memória; a `Connection` os envia em pedaços de 64 KB com
+   `pread`, voltando ao loop quando o socket enche. Memória constante por conexão e **fim do limite de 10 MB**.
+2. **Arquivos pequenos (≤ 64 KB)** vão numa única leitura para a memória e o descritor fecha na hora.
+3. **Abertura segura:** o arquivo é aberto e o caminho é conferido **no descritor** (`F_GETPATH`/`/proc/self/fd`), o que fecha
+   a janela TOCTOU. Como essa checagem é autoritativa, o caminho passou a ser montado só por texto (`..` recusado, nenhuma
+   chamada de sistema) e a raiz é canonicalizada **uma vez** por servidor (`StaticRoot`), em vez de duas vezes por requisição.
+4. `O_NONBLOCK` na abertura: um FIFO dentro de `www/` travaria o `open()` para sempre, e com uma thread só, todos os clientes.
+
+Medição (`wrk -t4`, Release, rodadas alternadas; `index.html` de ~0,5 KB e um arquivo aleatório de 5 MB):
+
+| Cenário | Fase 8 (`main`) | Esta versão |
+|---|---|---|
+| `index.html`, 64 conexões | 25.250 req/s (12,6 MB/s) | **57.900 req/s** (28,8 MB/s), +130% |
+| `index.html`, 1000 conexões | 24.700 req/s, 26.363 erros de leitura | **56.200 req/s**, ~1.000 erros de leitura |
+| 5 MB, 16 conexões | 61 req/s (**312 MB/s**) | **1.640 req/s** (**8 GB/s**), 26× |
+| arquivo de 25 MB | 500 (limite de 10 MB) | serve, íntegro, em 151 ms (teste) |
+
+O ganho do arquivo de 5 MB vem de o `main` ler o arquivo com um `istreambuf_iterator` (byte a byte) para dentro de uma
+`std::string`. Já o ganho do arquivo pequeno vem de eliminar ~20 chamadas de sistema de canonicalização por requisição. O
+resultado supera até o thread pool original (48,7 mil req/s).
+
+**Limite conhecido:** com 1000 clientes abrindo a conexão **no mesmo instante** ainda aparecem algumas centenas de erros de
+leitura (0,03–0,1%). Não vêm do servidor: a fila de escuta do macOS tem 128 posições (`kern.ipc.somaxconn`) e a rajada
+inicial a excede. Testar menos eventos por volta do loop (32 em vez de 256) não mudou o resultado.

@@ -24,18 +24,27 @@ struct OpenedFile {
 };
 
 /// Abre com seguranca o arquivo que o alvo da requisicao (ja decodificado, ver decode_target_path) designa dentro de
-/// @p root. Duas defesas em sequencia:
+/// @p root. A seguranca esta em duas camadas:
 ///
-///  1. resolve_static_path(): confere o caminho (".." recusado, symlinks resolvidos, dentro da raiz);
-///  2. open_verified(): abre sem seguir um symlink no ultimo componente (O_NOFOLLOW) e confere DE NOVO, no descritor ja
-///     aberto, que o arquivo esta dentro da raiz.
+///  1. lexical_static_path(): so texto, recusa ".." e byte nulo (nao toca no disco);
+///  2. open_verified(): abre o arquivo e confere, no descritor ja aberto, que o arquivo REAL (depois de seguir todos os
+///     symlinks, no ultimo componente ou em qualquer diretorio do caminho) esta dentro da raiz. Esta e a defesa que
+///     vale (autoritativa). Um symlink que aponta para DENTRO de www/ continua funcionando; um que aponta para fora da
+///     404.
 ///
-/// O passo 2 fecha a janela TOCTOU (time-of-check to time-of-use): entre conferir um caminho e abri-lo alguem poderia
-/// trocar um diretorio ou arquivo por um symlink para fora de www/. O descritor, depois de aberto, nao muda de objeto.
+/// Conferir o descritor, e nao o nome, fecha a janela TOCTOU (time-of-check to time-of-use): entre conferir um caminho
+/// e abri-lo alguem poderia trocar um diretorio ou arquivo por um symlink para fora de www/; o descritor, depois de
+/// aberto, nao muda de objeto.
+/// @param canonical_root a raiz ja canonicalizada (canonical_static_root(), ou StaticRoot): calcula-la custa varias
+///        chamadas de sistema, entao quem serve muitas requisicoes a calcula uma vez so.
+[[nodiscard]] OpenedFile open_static_file(const std::filesystem::path& root,
+                                          const std::filesystem::path& canonical_root, std::string_view decoded_path);
+
+/// Conveniencia: canonicaliza @p root a cada chamada (mais lento; serve para testes e usos esporadicos).
 [[nodiscard]] OpenedFile open_static_file(const std::filesystem::path& root, std::string_view decoded_path);
 
 /// A segunda metade de open_static_file(), separada para poder ser testada com o estado "link trocado depois da
-/// checagem". @p candidate e um caminho que ja passou por resolve_static_path(); @p canonical_root vem de
+/// checagem". @p candidate e o caminho montado por lexical_static_path(); @p canonical_root vem de
 /// canonical_static_root().
 ///
 /// Abre com O_NONBLOCK: um FIFO (pipe nomeado) dentro de www/ travaria o open() para sempre, e como o servidor atende

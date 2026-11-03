@@ -314,7 +314,8 @@ std::size_t validated_max_connections(std::size_t max_connections) {
 Server::Server(std::uint16_t port, std::filesystem::path root, std::size_t max_connections)
     : m_root(std::move(root)), m_max_connections(validated_max_connections(max_connections)), m_listener(port) {
     // captura a raiz por valor: o fallback nao pode depender do endereco do Server (que e movivel)
-    m_router.set_fallback([root = m_root](const HttpRequest& request) { return serve_static(root, request); });
+    m_router.set_fallback(
+        [root = StaticRoot{m_root}](const HttpRequest& request) { return serve_static(root, request); });
     log_info(std::format("Servidor escutando na porta {}...", m_listener.port()));
 }
 

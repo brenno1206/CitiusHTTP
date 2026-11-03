@@ -48,7 +48,7 @@ OpenStatus status_from_errno(int error) {
     switch (error) {
     case ENOENT:
     case ENOTDIR:
-    case ELOOP: // O_NOFOLLOW num symlink: alguem trocou o arquivo por um link
+    case ELOOP: // ciclo de symlinks
     case ENXIO: // dispositivo/FIFO sem o outro lado
         return OpenStatus::NOT_FOUND;
     case EACCES:
@@ -74,9 +74,9 @@ bool fd_is_inside(const FileDescriptor& file, const fs::path& canonical_root) {
 }
 
 OpenedFile open_verified(const fs::path& candidate, const fs::path& canonical_root) {
-    // O_NONBLOCK: nao travar num FIFO; O_NOFOLLOW: nao seguir um symlink no ultimo componente; O_CLOEXEC: nao vazar o
-    // fd para processos filhos. Nenhum dos tres muda a leitura de um arquivo comum.
-    FileDescriptor file{::open(candidate.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)};
+    // O_NONBLOCK: nao travar num FIFO; O_CLOEXEC: nao vazar o
+    // fd para processos filhos. Nenhum dos dois muda a leitura de um arquivo comum.
+    FileDescriptor file{::open(candidate.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC)};
     if (!file.valid()) return failure(status_from_errno(errno));
 
     // tudo daqui em diante e sobre o objeto JA ABERTO, nao sobre um nome que pode mudar
@@ -94,12 +94,16 @@ OpenedFile open_verified(const fs::path& candidate, const fs::path& canonical_ro
     return result;
 }
 
+OpenedFile open_static_file(const fs::path& root, const fs::path& canonical_root, std::string_view decoded_path) {
+    const std::optional<fs::path> candidate = lexical_static_path(root, decoded_path);
+    if (!candidate) return failure(OpenStatus::NOT_FOUND);
+    return open_verified(*candidate, canonical_root);
+}
+
 OpenedFile open_static_file(const fs::path& root, std::string_view decoded_path) {
     const std::optional<fs::path> canonical_root = canonical_static_root(root);
     if (!canonical_root) return failure(OpenStatus::NOT_FOUND);
-    const std::optional<fs::path> candidate = resolve_static_path(root, decoded_path);
-    if (!candidate) return failure(OpenStatus::NOT_FOUND);
-    return open_verified(*candidate, *canonical_root);
+    return open_static_file(root, *canonical_root, decoded_path);
 }
 
 } // namespace citius

@@ -1,12 +1,10 @@
 #include "citius/files/StaticPath.hpp"
 #include <filesystem>
-#include <fstream>
 #include <gtest/gtest.h>
 #include <string>
 
 namespace fs = std::filesystem;
 using citius::decode_target_path;
-using citius::resolve_static_path;
 
 // ---------- decode_target_path ----------
 
@@ -50,107 +48,79 @@ TEST(DecodeTargetPathTest, ExigeBarraInicial) {
     EXPECT_FALSE(decode_target_path("http://x/y"));
 }
 
-// ---------- resolve_static_path ----------
+// ---------- lexical_static_path ----------
+// So texto: nao toca no disco, entao nao precisa de arquivos reais. Symlinks que escapam da raiz sao tratados (e
+// testados) em open_static_file, que confere o caminho REAL do arquivo ja aberto.
 
-class ResolveStaticPathTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        base = fs::temp_directory_path() /
-               ("citius_staticpath_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()) + "_" +
-                ::testing::UnitTest::GetInstance()->current_test_info()->name());
-        fs::remove_all(base);
-        fs::create_directories(base / "www" / "sub");
-        touch(base / "www" / "index.html");
-        touch(base / "www" / "style.css");
-        touch(base / "www" / "sub" / "index.html");
-        touch(base / "secret.txt"); // fora da raiz publica
-        std::error_code ec;
-        fs::create_symlink(base / "secret.txt", base / "www" / "link.txt", ec);
-        root = base / "www";
-        canonical_root = fs::canonical(root); // no macOS /var e link para /private/var
-    }
+using citius::lexical_static_path;
 
-    void TearDown() override {
-        fs::remove_all(base);
-    }
-
-    static void touch(const fs::path& path) {
-        std::ofstream{path} << "x";
-    }
-
-    fs::path base;
-    fs::path root;
-    fs::path canonical_root;
-};
-
-TEST_F(ResolveStaticPathTest, RaizViraIndexHtml) {
-    EXPECT_EQ(resolve_static_path(root, "/"), canonical_root / "index.html");
+namespace {
+const fs::path kRaiz = "/srv/www"; // nao precisa existir
 }
 
-TEST_F(ResolveStaticPathTest, BarraFinalViraIndexDoDiretorio) {
-    EXPECT_EQ(resolve_static_path(root, "/sub/"), canonical_root / "sub" / "index.html");
+TEST(LexicalStaticPathTest, RaizViraIndexHtml) {
+    EXPECT_EQ(lexical_static_path(kRaiz, "/"), kRaiz / "index.html");
 }
 
-TEST_F(ResolveStaticPathTest, ArquivoExistente) {
-    EXPECT_EQ(resolve_static_path(root, "/style.css"), canonical_root / "style.css");
+TEST(LexicalStaticPathTest, BarraFinalViraIndexDoDiretorio) {
+    EXPECT_EQ(lexical_static_path(kRaiz, "/sub/"), kRaiz / "sub" / "index.html");
 }
 
-TEST_F(ResolveStaticPathTest, ArquivoInexistenteDentroDaRaizResolve) {
-    // quem decide 404 e quem le o arquivo; aqui so garantimos que esta dentro da raiz
-    EXPECT_EQ(resolve_static_path(root, "/nada.txt"), canonical_root / "nada.txt");
+TEST(LexicalStaticPathTest, ArquivoSimplesESubdiretorio) {
+    EXPECT_EQ(lexical_static_path(kRaiz, "/style.css"), kRaiz / "style.css");
+    EXPECT_EQ(lexical_static_path(kRaiz, "/sub/pagina.html"), kRaiz / "sub" / "pagina.html");
 }
 
-TEST_F(ResolveStaticPathTest, RaizComBarraFinalFunciona) {
-    EXPECT_EQ(resolve_static_path(root.string() + "/", "/style.css"), canonical_root / "style.css");
+TEST(LexicalStaticPathTest, NaoExigeQueOArquivoExista) {
+    EXPECT_EQ(lexical_static_path(kRaiz, "/nada.txt"), kRaiz / "nada.txt");
 }
 
-TEST_F(ResolveStaticPathTest, BarrasDuplicadasNaoViramCaminhoAbsoluto) {
-    // "//etc/passwd" nao pode ser lido como /etc/passwd: vira www/etc/passwd
-    EXPECT_EQ(resolve_static_path(root, "//etc/passwd"), canonical_root / "etc" / "passwd");
-    EXPECT_EQ(resolve_static_path(root, "/./style.css"), canonical_root / "style.css");
+TEST(LexicalStaticPathTest, RaizRelativaOuComBarraFinalFunciona) {
+    EXPECT_EQ(lexical_static_path("www", "/style.css"), fs::path("www") / "style.css");
+    EXPECT_EQ(lexical_static_path(kRaiz.string() + "/", "/style.css"), kRaiz / "style.css");
 }
 
-TEST_F(ResolveStaticPathTest, RejeitaPontoPonto) {
-    EXPECT_FALSE(resolve_static_path(root, "/../secret.txt"));
-    EXPECT_FALSE(resolve_static_path(root, "/sub/../../secret.txt"));
-    EXPECT_FALSE(resolve_static_path(root, "/sub/../style.css")); // conservador: nenhum ".." e aceito
-    EXPECT_FALSE(resolve_static_path(root, "/.."));
-    EXPECT_FALSE(resolve_static_path(root, "/../www/style.css"));
+TEST(LexicalStaticPathTest, BarrasDuplicadasNaoViramCaminhoAbsoluto) {
+    // "//etc/passwd" nao pode ser lido como /etc/passwd: vira <raiz>/etc/passwd
+    EXPECT_EQ(lexical_static_path(kRaiz, "//etc/passwd"), kRaiz / "etc" / "passwd");
+    EXPECT_EQ(lexical_static_path(kRaiz, "/./style.css"), kRaiz / "style.css");
 }
 
-TEST_F(ResolveStaticPathTest, RejeitaPontoPontoCodificado) {
+TEST(LexicalStaticPathTest, RejeitaPontoPonto) {
+    EXPECT_FALSE(lexical_static_path(kRaiz, "/../secret.txt"));
+    EXPECT_FALSE(lexical_static_path(kRaiz, "/sub/../../secret.txt"));
+    EXPECT_FALSE(lexical_static_path(kRaiz, "/sub/../style.css")); // conservador: nenhum ".." e aceito
+    EXPECT_FALSE(lexical_static_path(kRaiz, "/.."));
+    EXPECT_FALSE(lexical_static_path(kRaiz, "/../www/style.css"));
+}
+
+TEST(LexicalStaticPathTest, RejeitaPontoPontoCodificado) {
     for (const char* target : {"/%2e%2e/secret.txt", "/%2E%2E/secret.txt", "/%2e%2e%2fsecret.txt",
                                "/sub/%2e%2e/%2e%2e/secret.txt", "/..%2fsecret.txt"}) {
         auto decoded = decode_target_path(target);
         ASSERT_TRUE(decoded) << target;
-        EXPECT_FALSE(resolve_static_path(root, *decoded)) << target;
+        EXPECT_FALSE(lexical_static_path(kRaiz, *decoded)) << target;
     }
 }
 
-TEST_F(ResolveStaticPathTest, PercentDuploFicaDentroDaRaiz) {
+TEST(LexicalStaticPathTest, PercentDuploFicaDentroDaRaiz) {
     auto decoded = decode_target_path("/%252e%252e/secret.txt");
     ASSERT_TRUE(decoded);
-    EXPECT_EQ(resolve_static_path(root, *decoded), canonical_root / "%2e%2e" / "secret.txt");
+    EXPECT_EQ(lexical_static_path(kRaiz, *decoded), kRaiz / "%2e%2e" / "secret.txt");
 }
 
-TEST_F(ResolveStaticPathTest, RejeitaNuloEEntradaSemBarra) {
-    EXPECT_FALSE(resolve_static_path(root, std::string("/a\0b", 4)));
-    EXPECT_FALSE(resolve_static_path(root, ""));
-    EXPECT_FALSE(resolve_static_path(root, "style.css"));
+TEST(LexicalStaticPathTest, RejeitaNuloEEntradaSemBarra) {
+    EXPECT_FALSE(lexical_static_path(kRaiz, std::string("/a\0b", 4)));
+    EXPECT_FALSE(lexical_static_path(kRaiz, ""));
+    EXPECT_FALSE(lexical_static_path(kRaiz, "style.css"));
 }
 
-TEST_F(ResolveStaticPathTest, SymlinkParaForaDaRaizERejeitado) {
-    if (!fs::is_symlink(root / "link.txt")) {
-        GTEST_SKIP() << "sistema nao permitiu criar symlink";
-    }
-    EXPECT_FALSE(resolve_static_path(root, "/link.txt"));
-}
-
-TEST_F(ResolveStaticPathTest, CaminhoGiganteNaoQuebra) {
+TEST(LexicalStaticPathTest, CaminhoGiganteNaoQuebra) {
     std::string huge = "/" + std::string(100000, 'a');
-    auto result = resolve_static_path(root, huge);
-    // ou recusa, ou (se o SO aceitar) fica dentro da raiz; nunca lanca nem escapa
-    if (result) {
-        EXPECT_EQ(result->parent_path(), canonical_root);
-    }
+
+    auto result = lexical_static_path(kRaiz, huge);
+
+    // nunca lanca nem escapa: fica diretamente dentro da raiz
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->parent_path(), kRaiz);
 }

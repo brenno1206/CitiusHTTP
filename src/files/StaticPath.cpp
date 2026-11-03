@@ -1,5 +1,4 @@
 #include "citius/files/StaticPath.hpp"
-#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -65,7 +64,7 @@ std::optional<std::filesystem::path> canonical_static_root(const std::filesystem
     return canonical_root;
 }
 
-std::optional<std::filesystem::path> resolve_static_path(const std::filesystem::path& root,
+std::optional<std::filesystem::path> lexical_static_path(const std::filesystem::path& root,
                                                          std::string_view decoded_path) {
     namespace fs = std::filesystem;
 
@@ -93,26 +92,7 @@ std::optional<std::filesystem::path> resolve_static_path(const std::filesystem::
     if (wants_index) {
         relative /= "index.html";
     }
-
-    std::optional<fs::path> const canonical_root = canonical_static_root(root);
-    if (!canonical_root) {
-        return std::nullopt;
-    }
-    // error_code: weakly_canonical lancaria em caso de erro do SO (nome longo demais, ELOOP...);
-    // para entrada de cliente isso e rotina, entao viramos "recusado"
-    std::error_code ec;
-    // resolve symlinks dos trechos que existem; e aqui que um link para fora da raiz e desmascarado
-    fs::path candidate = fs::weakly_canonical(*canonical_root / relative, ec);
-    if (ec) {
-        return std::nullopt;
-    }
-
-    // dentro da raiz = todos os componentes da raiz sao prefixo do candidato.
-    // Comparar componentes (e nao texto) evita que "www2" passe por "www".
-    if (std::ranges::mismatch(*canonical_root, candidate).in1 != canonical_root->end()) {
-        return std::nullopt;
-    }
-    return candidate;
+    return root / relative;
 }
 
 } // namespace citius
