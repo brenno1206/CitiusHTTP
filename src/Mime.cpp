@@ -30,7 +30,7 @@ constexpr std::array kMimeTable = std::to_array<MimeEntry>({
 
 std::string_view mime_type(std::string_view extension) noexcept {
     // compara sem alocar (a funcao e noexcept); a tabela ja esta em minusculas
-    auto equals_ignore_case = [](std::string_view a, std::string_view b) {
+    auto const equals_ignore_case = [](std::string_view a, std::string_view b) {
         return std::ranges::equal(a, b, [](char x, char y) {
             return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
         });

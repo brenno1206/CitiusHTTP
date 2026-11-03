@@ -17,7 +17,8 @@ bool HttpResponse::set_header(std::string_view name, std::string_view value) {
         return false;
     }
 
-    auto existing = std::ranges::find_if(m_headers, [&](const auto& header) { return iequals(header.first, name); });
+    auto const existing =
+        std::ranges::find_if(m_headers, [&](const auto& header) { return iequals(header.first, name); });
     if (existing != m_headers.end()) {
         existing->second = std::string(value);
     } else {

@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     if (argc > 1) args.assign(argv + 1, argv + argc);
 
     // saida do operador (ajuda/erro de uso) vai direto ao terminal: o Logger ainda nao foi configurado
-    citius::ConfigResult parsed = citius::parse_config(args);
+    citius::ConfigResult const parsed = citius::parse_config(args);
     if (parsed.status == citius::ParseStatus::HELP) {
         std::cout << citius::config_usage(program);
         return 0;

@@ -47,14 +47,14 @@ struct HttpRequest {
     ///         HTTP/1.0 so e persistente com o token "keep-alive". "close" vence "keep-alive".
     [[nodiscard]] bool keep_alive() const {
         const bool persistent_by_default = version == "HTTP/1.1";
-        auto it = headers.find("connection");
+        auto const it = headers.find("connection");
         if (it == headers.end()) return persistent_by_default;
 
         bool has_close = false;
         bool has_keep_alive = false;
         std::string_view list = it->second;
         while (!list.empty()) {
-            std::size_t comma = list.find(',');
+            std::size_t const comma = list.find(',');
             std::string_view token = list.substr(0, comma);
             list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
             while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) token.remove_prefix(1);

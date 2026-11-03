@@ -21,7 +21,7 @@ namespace citius {
 /// Usado para impedir injecao de linhas em cabecalhos.
 [[nodiscard]] inline bool has_control_chars(std::string_view text) {
     return std::ranges::any_of(text, [](char c) {
-        auto u = static_cast<unsigned char>(c);
+        auto const u = static_cast<unsigned char>(c);
         return (u < 0x20 && c != '\t') || u == 0x7f;
     });
 }

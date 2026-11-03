@@ -14,7 +14,7 @@ std::string timestamp() {
     std::tm local{};
     localtime_r(&now, &local);
     char buffer[32];
-    std::size_t size = std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local);
+    std::size_t const size = std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local);
     return std::string(buffer, size);
 }
 
@@ -56,13 +56,13 @@ void Logger::log(LogLevel level, std::string_view message) {
     line += " [";
     line += level_name(level);
     line += "] ";
-    for (char c : message) {
-        auto u = static_cast<unsigned char>(c);
+    for (char const c : message) {
+        auto const u = static_cast<unsigned char>(c);
         line += ((u < 0x20 && c != '\t') || u == 0x7f) ? '?' : c;
     }
     line += '\n';
 
-    std::lock_guard lock{m_mutex};
+    std::lock_guard const lock{m_mutex};
     // flush a cada linha: com stdout redirecionado para arquivo ele e totalmente bufferizado, e
     // um log que so aparece quando o buffer enche (ou o servidor cai) nao serve para investigar
     std::ostream& stream = level >= LogLevel::WARN ? m_err : m_out;

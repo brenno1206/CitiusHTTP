@@ -164,7 +164,7 @@ void Server::event_loop(bool single_client) {
         }
     };
 
-    auto accept_pending = [&](Clock::time_point now) {
+    auto const accept_pending = [&](Clock::time_point now) {
         for (int i = 0; i < kAcceptBatch && accepting; ++i) {
             // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
             const int fd = accept(m_server_socket.get(), nullptr, nullptr);
@@ -221,7 +221,7 @@ void Server::event_loop(bool single_client) {
                 if (accepting) accept_pending(now);
                 continue;
             }
-            auto it = connections.find(event.fd);
+            auto const it = connections.find(event.fd);
             if (it == connections.end()) continue;
 
             Connection& conn = *it->second.conn;

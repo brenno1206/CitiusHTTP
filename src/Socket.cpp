@@ -52,8 +52,8 @@ bool Socket::set_recv_timeout(std::chrono::milliseconds timeout) noexcept {
     if (timeout <= std::chrono::milliseconds::zero()) {
         return false;
     }
-    auto secs = std::chrono::duration_cast<std::chrono::seconds>(timeout);
-    auto usecs = std::chrono::duration_cast<std::chrono::microseconds>(timeout - secs);
+    auto const secs = std::chrono::duration_cast<std::chrono::seconds>(timeout);
+    auto const usecs = std::chrono::duration_cast<std::chrono::microseconds>(timeout - secs);
     timeval tv{.tv_sec = static_cast<time_t>(secs.count()), .tv_usec = static_cast<suseconds_t>(usecs.count())};
     return ::setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
 }
@@ -65,7 +65,7 @@ bool Socket::set_nonblocking() noexcept {
 
 bool Socket::send_all(std::string_view data) noexcept {
     while (!data.empty()) {
-        ssize_t sent = send_some(data);
+        ssize_t const sent = send_some(data);
         if (sent < 0) {
             if (errno == EINTR) {
                 continue;
@@ -89,7 +89,7 @@ ssize_t Socket::send_some(std::string_view data) noexcept {
 
 ssize_t Socket::recv_some(std::span<char> buffer) noexcept {
     while (true) {
-        ssize_t received = ::recv(m_fd, buffer.data(), buffer.size(), 0);
+        ssize_t const received = ::recv(m_fd, buffer.data(), buffer.size(), 0);
         if (received < 0 && errno == EINTR) {
             continue;
         }

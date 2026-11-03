@@ -84,7 +84,7 @@ ConfigResult parse_config(std::span<const std::string_view> args) {
         std::string_view name = arg;
         std::string_view value;
         bool has_value = false;
-        if (std::size_t eq = arg.find('='); eq != std::string_view::npos) {
+        if (std::size_t const eq = arg.find('='); eq != std::string_view::npos) {
             name = arg.substr(0, eq);
             value = arg.substr(eq + 1);
             has_value = true;

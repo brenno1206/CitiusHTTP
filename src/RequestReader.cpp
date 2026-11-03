@@ -25,7 +25,7 @@ ReadResult read_request_head(Socket& socket, std::size_t max_bytes, std::string_
 
     while (true) {
         // procura antes de ler: o delimitador pode ja estar em 'initial'
-        if (std::size_t end = result.data.find(kHeadEnd, search_from); end != std::string::npos) {
+        if (std::size_t const end = result.data.find(kHeadEnd, search_from); end != std::string::npos) {
             result.head_size = end + kHeadEnd.size();
             result.status = result.head_size > max_bytes ? ReadStatus::TOO_LARGE : ReadStatus::COMPLETE;
             return result;
@@ -35,7 +35,7 @@ ReadResult read_request_head(Socket& socket, std::size_t max_bytes, std::string_
             return result;
         }
 
-        ssize_t received = socket.recv_some(buffer);
+        ssize_t const received = socket.recv_some(buffer);
         if (received < 0) {
             result.status = failure_status();
             return result;
@@ -61,8 +61,8 @@ ReadResult read_request_body(Socket& socket, std::string_view already_read, std:
 
     while (result.data.size() < length) {
         // pede no maximo o que falta: assim nao consumimos bytes da proxima requisicao
-        std::size_t missing = length - result.data.size();
-        ssize_t received = socket.recv_some(std::span<char>{buffer.data(), std::min(buffer.size(), missing)});
+        std::size_t const missing = length - result.data.size();
+        ssize_t const received = socket.recv_some(std::span<char>{buffer.data(), std::min(buffer.size(), missing)});
         if (received < 0) {
             result.status = failure_status();
             return result;
