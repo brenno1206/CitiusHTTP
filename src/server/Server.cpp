@@ -8,6 +8,7 @@
 #include "citius/net/Socket.hpp"
 #include "citius/server/Connection.hpp"
 #include "citius/util/Logger.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -17,7 +18,6 @@
 #include <iterator>
 #include <memory>
 #include <stdexcept> // Para lançar std::runtime_error
-#include <thread>
 #include <unordered_map>
 #include <utility> // std::move
 
@@ -34,8 +34,11 @@ constexpr std::chrono::milliseconds kLoopTick{50};
 // (o aviso e por nivel: se sobrar cliente na fila, o proximo wait() avisa de novo)
 constexpr int kAcceptBatch = 64;
 
-// Pausa depois de um erro persistente de accept (ex.: sem fds, EMFILE), para nao girar em laco apertado
-constexpr auto kAcceptErrorPause = std::chrono::milliseconds(10);
+// Depois de um erro de accept (ex.: sem descritores, EMFILE) o servidor para de vigiar o socket de escuta por um tempo
+// que dobra a cada falha seguida, de kMinAcceptBackoff ate kMaxAcceptBackoff, e volta sozinho. Dormir no laco seria
+// pior: travaria todos os clientes, e vigiar o socket sem aceitar giraria em 100% de CPU (o aviso por nivel nao some).
+constexpr std::chrono::milliseconds kMinAcceptBackoff{10};
+constexpr std::chrono::milliseconds kMaxAcceptBackoff{1000};
 
 // Uma conexao e o que o Poller foi mandado vigiar nela (para so chamar modify() quando mudar).
 struct Entry {
@@ -101,6 +104,7 @@ public:
             // sem aceitar mais (parada, ou o unico cliente de serve_one) e sem conexoes: acabou
             if (!m_accepting && m_connections.empty()) return;
 
+            resume_accepting_if_due(Clock::now());
             for (const PollEvent& event : m_poller.wait(kLoopTick)) handle_event(event, Clock::now());
             sweep_deadlines(Clock::now());
         }
@@ -116,9 +120,32 @@ private:
     }
 
     void stop_accepting() {
-        if (m_accepting) {
+        if (m_listener_watched) {
             (void)m_poller.remove(m_listener.fd());
-            m_accepting = false;
+            m_listener_watched = false;
+        }
+        m_accepting = false;
+    }
+
+    // O accept falhou por falta de recursos: para de vigiar o socket de escuta por um tempo (ver kMinAcceptBackoff).
+    // As conexoes abertas seguem sendo atendidas normalmente.
+    void pause_accepting(Clock::time_point now) {
+        if (m_listener_watched) {
+            (void)m_poller.remove(m_listener.fd());
+            m_listener_watched = false;
+        }
+        m_accept_backoff =
+            m_accept_backoff.count() == 0 ? kMinAcceptBackoff : std::min(m_accept_backoff * 2, kMaxAcceptBackoff);
+        m_accept_resume_at = now + m_accept_backoff;
+        log_error(std::format("Falha ao aceitar conexao; nova tentativa em {} ms.", m_accept_backoff.count()));
+    }
+
+    void resume_accepting_if_due(Clock::time_point now) {
+        if (!m_accepting || m_listener_watched || now < m_accept_resume_at) return;
+        if (m_poller.add(m_listener.fd(), Interest::READ)) {
+            m_listener_watched = true;
+        } else {
+            m_accept_resume_at = now + m_accept_backoff; // nao deu para voltar a vigiar: tenta de novo adiante
         }
     }
 
@@ -141,6 +168,8 @@ private:
         AcceptResult accepted = m_listener.accept();
         switch (accepted.status) {
         case AcceptStatus::ACCEPTED:
+            m_accept_backoff =
+                std::chrono::milliseconds::zero(); // voltou a funcionar: a proxima falha recomeca do minimo
             break;
         case AcceptStatus::RETRY:
             return true; // sinal, ou o cliente desistiu: tenta o proximo
@@ -148,8 +177,7 @@ private:
             return false; // fila de espera vazia
         case AcceptStatus::EXHAUSTED:
         case AcceptStatus::FAILED:
-            log_error("Falha ao aceitar conexao.");
-            std::this_thread::sleep_for(kAcceptErrorPause);
+            pause_accepting(now);
             return false;
         }
 
@@ -211,6 +239,9 @@ private:
     const std::atomic<bool>& m_stop;
     ConnectionMap m_connections;
     bool m_accepting = true;
+    bool m_listener_watched = true; ///< o socket de escuta esta no Poller (fica false durante o backoff)
+    std::chrono::milliseconds m_accept_backoff{0};
+    Clock::time_point m_accept_resume_at;
     bool m_draining = false;
     Clock::time_point m_next_sweep;
 };

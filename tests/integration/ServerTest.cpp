@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <array>
 #include <chrono>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -480,6 +481,88 @@ TEST(ServerConcorrenciaTest, QuinhentasConexoesAbertasAoMesmoTempoSaoTodasAtendi
         EXPECT_TRUE(comeca_com(std::string(buffer.data(), static_cast<std::size_t>(n)), "HTTP/1.1 200 OK\r\n"))
             << "cliente " << i;
     }
+}
+
+namespace {
+
+// Esgota os descritores do processo de forma controlada e devolve tudo no destrutor (mesmo se o teste falhar).
+class SemDescritores {
+public:
+    // Abaixa o limite para poucos fds acima do maior aberto hoje (assim o preenchimento e rapido) e ocupa todos os
+    // que sobrarem abrindo /dev/null. Depois disso, qualquer socket()/accept()/open() no processo falha com EMFILE.
+    SemDescritores() {
+        ::getrlimit(RLIMIT_NOFILE, &m_original);
+        int maior = 0;
+        for (int fd = 0; fd < 4096; ++fd) {
+            if (::fcntl(fd, F_GETFD) != -1) maior = fd;
+        }
+        rlimit baixo = m_original;
+        baixo.rlim_cur = static_cast<rlim_t>(maior) + 40;
+        ::setrlimit(RLIMIT_NOFILE, &baixo);
+        for (;;) {
+            const int fd = ::open("/dev/null", O_RDONLY);
+            if (fd < 0) break;
+            m_ocupados.emplace_back(fd);
+        }
+    }
+
+    ~SemDescritores() {
+        devolver();
+    }
+
+    SemDescritores(const SemDescritores&) = delete;
+    SemDescritores& operator=(const SemDescritores&) = delete;
+
+    // Fecha os descritores ocupados e restaura o limite original.
+    void devolver() {
+        m_ocupados.clear();
+        ::setrlimit(RLIMIT_NOFILE, &m_original);
+    }
+
+private:
+    rlimit m_original{};
+    std::vector<Socket> m_ocupados; // Socket fecha o fd no destrutor
+};
+
+} // namespace
+
+// Antes um erro de accept dormia 10 ms COM O LOOP BLOQUEADO e tentava de novo, atrasando todos os clientes e
+// enchendo o log. Agora o servidor para de vigiar o socket de escuta por um tempo (backoff) e volta sozinho; as
+// conexoes ja abertas seguem normais. Obs.: o que acontece com o cliente que tentou conectar DURANTE a falta de
+// descritores depende do SO (no macOS o kernel ja descartou a conexao ao falhar o accept; no Linux ela espera na
+// fila), por isso o teste nao exige nada dele: exige que um cliente que chega DEPOIS seja atendido.
+TEST(ServerConcorrenciaTest, FaltaDeDescritoresNaoTravaAsConexoesAbertasEOServidorSeRecupera) {
+    ServidorEmExecucao exec;
+    Socket aberta = conectar(exec.server.port()); // ja aceita e em keep-alive
+    ASSERT_TRUE(aberta.send_all(kGetIndex));
+    std::array<char, 4096> buffer;
+    ASSERT_GT(aberta.recv_some(buffer), 0);
+
+    Socket intruso{::socket(AF_INET, SOCK_STREAM, 0)}; // criado antes de acabarem os descritores
+    ASSERT_TRUE(intruso.valid());
+    sockaddr_in endereco{};
+    endereco.sin_family = AF_INET;
+    endereco.sin_port = htons(exec.server.port());
+    ::inet_pton(AF_INET, "127.0.0.1", &endereco.sin_addr);
+
+    {
+        SemDescritores sem_fds;
+        // o connect nao precisa de fd novo; ja o accept do servidor falha com EMFILE e ele entra em backoff
+        (void)::connect(intruso.get(), reinterpret_cast<const sockaddr*>(&endereco), sizeof(endereco));
+        esperar(300);
+
+        // a conexao que ja estava aberta continua sendo atendida durante a falta de descritores
+        const auto inicio = std::chrono::steady_clock::now();
+        ASSERT_TRUE(aberta.send_all(kGetIndex));
+        ASSERT_GT(aberta.recv_some(buffer), 0);
+        EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(500));
+
+        sem_fds.devolver(); // volta a haver descritores
+    }
+
+    // o servidor retoma o accept sozinho e atende quem chega depois (o prazo de 5 s cobre o backoff maximo)
+    const std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
 }
 
 TEST(ServerConcorrenciaTest, SlowlorisComUmByteDeVezEmQuandoRecebe408NoPrazoTotal) {
