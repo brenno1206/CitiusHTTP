@@ -66,6 +66,141 @@ void reject_busy(Socket client) {
     (void)client.send_some(busy.serialize());
 }
 
+// O event loop em si: um objeto por chamada a run()/serve_one(), com o estado que existe enquanto ele
+// roda (Poller, conexoes, se ainda aceita, se esta encerrando). Cada metodo cuida de uma coisa: aceitar,
+// tratar um evento, varrer prazos, encerrar.
+class EventLoop {
+public:
+    using Clock = Connection::Clock;
+    using AtomicMillis = std::atomic<std::chrono::milliseconds::rep>;
+
+    /// @param single_client aceita um cliente so e termina quando a conexao dele acabar (serve_one)
+    /// @param read_timeout_ms,idle_timeout_ms lidos a cada cliente novo: o Server pode muda-los durante run()
+    EventLoop(int listener_fd, bool single_client, std::size_t max_connections, Connection::Handler handler,
+              const AtomicMillis& read_timeout_ms, const AtomicMillis& idle_timeout_ms, const std::atomic<bool>& stop)
+        : m_listener_fd(listener_fd), m_single_client(single_client), m_max_connections(max_connections),
+          m_handler(std::move(handler)), m_read_timeout_ms(read_timeout_ms), m_idle_timeout_ms(idle_timeout_ms),
+          m_stop(stop), m_next_sweep(Clock::now() + kLoopTick) {
+        if (!m_poller.add(m_listener_fd, Interest::READ)) {
+            throw std::runtime_error("Falha ao registrar o socket de escuta no Poller.");
+        }
+    }
+
+    void run() {
+        while (true) {
+            if (m_stop.load() && !m_draining) begin_draining();
+            // sem aceitar mais (parada, ou o unico cliente de serve_one) e sem conexoes: acabou
+            if (!m_accepting && m_connections.empty()) return;
+
+            for (const PollEvent& event : m_poller.wait(kLoopTick)) handle_event(event, Clock::now());
+            sweep_deadlines(Clock::now());
+        }
+    }
+
+private:
+    // Aplica @p fn a cada conexao e descarta as que fecharam (ou nao da mais para vigiar).
+    template <typename Fn> void update_all(Fn&& fn) {
+        for (auto it = m_connections.begin(); it != m_connections.end();) {
+            fn(*it->second.conn);
+            it = sync_interest(m_poller, it->second) ? std::next(it) : m_connections.erase(it);
+        }
+    }
+
+    void stop_accepting() {
+        if (m_accepting) {
+            (void)m_poller.remove(m_listener_fd);
+            m_accepting = false;
+        }
+    }
+
+    // Encerramento gracioso: nao aceita mais; conexao ociosa fecha na hora, as demais terminam a requisicao em curso.
+    void begin_draining() {
+        m_draining = true;
+        stop_accepting();
+        if (!m_single_client) log_info("Encerrando: esperando os clientes em andamento...");
+        update_all([](Connection& conn) { conn.close_when_idle(); });
+    }
+
+    void accept_pending(Clock::time_point now) {
+        for (int i = 0; i < kAcceptBatch && m_accepting; ++i) {
+            if (!accept_one(now)) return;
+        }
+    }
+
+    // @return false quando nao ha mais cliente a aceitar por agora (ou o accept falhou)
+    bool accept_one(Clock::time_point now) {
+        // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
+        const int fd = accept(m_listener_fd, nullptr, nullptr);
+        if (fd < 0) {
+            if (errno == EINTR || errno == ECONNABORTED) return true;  // sinal, ou o cliente desistiu: tenta o proximo
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return false; // fila de espera vazia
+            log_error("Falha ao aceitar conexao.");
+            std::this_thread::sleep_for(kAcceptErrorPause);
+            return false;
+        }
+
+        Socket client{fd};
+        if (m_connections.size() >= m_max_connections) {
+            log_warn("(limite de conexoes) -> 503");
+            reject_busy(std::move(client));
+        } else {
+            admit(std::move(client), now);
+        }
+        return true;
+    }
+
+    void admit(Socket client, Clock::time_point now) {
+        ConnectionOptions options;
+        options.read_timeout = std::chrono::milliseconds(m_read_timeout_ms.load());
+        options.idle_timeout = std::chrono::milliseconds(m_idle_timeout_ms.load());
+        auto conn = std::make_unique<Connection>(std::move(client), m_handler, now, options);
+        if (conn->closed()) return;
+
+        const int conn_fd = conn->fd();
+        if (!m_poller.add(conn_fd, Interest::READ)) {
+            log_warn("Falha ao registrar o cliente no Poller.");
+            return; // o destrutor de 'conn' fecha o fd
+        }
+        m_connections.emplace(conn_fd, Entry{std::move(conn), Interest::READ});
+        if (m_single_client) stop_accepting(); // serve_one atende um cliente so
+    }
+
+    void handle_event(const PollEvent& event, Clock::time_point now) {
+        if (event.fd == m_listener_fd) {
+            if (m_accepting) accept_pending(now);
+            return;
+        }
+        auto const it = m_connections.find(event.fd);
+        if (it == m_connections.end()) return;
+
+        Connection& conn = *it->second.conn;
+        if (event.readable) conn.on_readable(now);
+        // "closed" sem "writable" acontece quando o par some durante o envio: on_writable descobre pelo erro do send
+        if (!conn.closed() && (event.writable || event.closed)) conn.on_writable(now);
+        if (!sync_interest(m_poller, it->second)) m_connections.erase(it);
+    }
+
+    // Prazos: varredura periodica, nao a cada evento (com milhares de conexoes seria custo por evento).
+    void sweep_deadlines(Clock::time_point now) {
+        if (now < m_next_sweep) return;
+        m_next_sweep = now + kLoopTick;
+        update_all([now](Connection& conn) { conn.check_deadline(now); });
+    }
+
+    Poller m_poller;
+    int m_listener_fd;
+    bool m_single_client;
+    std::size_t m_max_connections;
+    Connection::Handler m_handler;
+    const AtomicMillis& m_read_timeout_ms;
+    const AtomicMillis& m_idle_timeout_ms;
+    const std::atomic<bool>& m_stop;
+    ConnectionMap m_connections;
+    bool m_accepting = true;
+    bool m_draining = false;
+    Clock::time_point m_next_sweep;
+};
+
 } // namespace
 
 Server::Server(std::uint16_t port, std::filesystem::path root, std::size_t max_connections)
@@ -144,104 +279,14 @@ void Server::run() {
 }
 
 void Server::event_loop(bool single_client) {
-    using Clock = Connection::Clock;
-
-    Poller poller;
-    if (!poller.add(m_server_socket.get(), Interest::READ)) {
-        throw std::runtime_error("Falha ao registrar o socket de escuta no Poller.");
-    }
-
-    ConnectionMap connections;
-    bool accepting = true;
-    bool draining = false;
-    Clock::time_point next_sweep = Clock::now() + kLoopTick;
-    const Connection::Handler handler = [this](const HttpRequest& request) { return m_router.route(request); };
-
-    auto stop_accepting = [&] {
-        if (accepting) {
-            (void)poller.remove(m_server_socket.get());
-            accepting = false;
-        }
-    };
-
-    auto const accept_pending = [&](Clock::time_point now) {
-        for (int i = 0; i < kAcceptBatch && accepting; ++i) {
-            // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
-            const int fd = accept(m_server_socket.get(), nullptr, nullptr);
-            if (fd < 0) {
-                if (errno == EINTR || errno == ECONNABORTED) continue; // sinal, ou o cliente desistiu: tenta o proximo
-                if (errno == EAGAIN || errno == EWOULDBLOCK) return;   // fila de espera vazia
-                log_error("Falha ao aceitar conexao.");
-                std::this_thread::sleep_for(kAcceptErrorPause);
-                return;
-            }
-
-            Socket client{fd};
-            if (connections.size() >= m_max_connections) {
-                log_warn("(limite de conexoes) -> 503");
-                reject_busy(std::move(client));
-                continue;
-            }
-
-            ConnectionOptions options;
-            options.read_timeout = std::chrono::milliseconds(m_read_timeout_ms.load());
-            options.idle_timeout = std::chrono::milliseconds(m_idle_timeout_ms.load());
-            auto conn = std::make_unique<Connection>(std::move(client), handler, now, options);
-            if (conn->closed()) continue;
-
-            const int conn_fd = conn->fd();
-            if (!poller.add(conn_fd, Interest::READ)) {
-                log_warn("Falha ao registrar o cliente no Poller.");
-                continue; // o destrutor de 'conn' fecha o fd
-            }
-            connections.emplace(conn_fd, Entry{std::move(conn), Interest::READ});
-            if (single_client) stop_accepting(); // serve_one atende um cliente so
-        }
-    };
-
-    while (true) {
-        if (m_stop.load() && !draining) {
-            // encerramento gracioso: nao aceita mais; conexao ociosa fecha na hora, as demais terminam a requisicao em
-            // curso
-            draining = true;
-            stop_accepting();
-            if (!single_client) log_info("Encerrando: esperando os clientes em andamento...");
-            for (auto it = connections.begin(); it != connections.end();) {
-                it->second.conn->close_when_idle();
-                it = sync_interest(poller, it->second) ? std::next(it) : connections.erase(it);
-            }
-        }
-        // sem aceitar mais (parada, ou o unico cliente de serve_one) e sem conexoes: acabou
-        if (!accepting && connections.empty()) break;
-
-        for (const PollEvent& event : poller.wait(kLoopTick)) {
-            const Clock::time_point now = Clock::now();
-
-            if (event.fd == m_server_socket.get()) {
-                if (accepting) accept_pending(now);
-                continue;
-            }
-            auto const it = connections.find(event.fd);
-            if (it == connections.end()) continue;
-
-            Connection& conn = *it->second.conn;
-            if (event.readable) conn.on_readable(now);
-            // "closed" sem "writable" acontece quando o par some durante o envio: on_writable descobre pelo erro do
-            // send
-            if (!conn.closed() && (event.writable || event.closed)) conn.on_writable(now);
-            if (!sync_interest(poller, it->second)) connections.erase(it);
-        }
-
-        // prazos: varredura periodica, nao a cada evento (com milhares de conexoes seria custo por evento)
-        const Clock::time_point now = Clock::now();
-        if (now >= next_sweep) {
-            next_sweep = now + kLoopTick;
-            for (auto it = connections.begin(); it != connections.end();) {
-                it->second.conn->check_deadline(now);
-                it = sync_interest(poller, it->second) ? std::next(it) : connections.erase(it);
-            }
-        }
-    }
+    EventLoop loop{m_server_socket.get(),
+                   single_client,
+                   m_max_connections,
+                   [this](const HttpRequest& request) { return m_router.route(request); },
+                   m_read_timeout_ms,
+                   m_idle_timeout_ms,
+                   m_stop};
+    loop.run();
 }
 
 } // namespace citius
