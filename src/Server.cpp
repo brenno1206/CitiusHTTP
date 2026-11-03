@@ -137,8 +137,9 @@ void Server::start(std::uint16_t port) {
         throw std::runtime_error("Erro no bind.\n");
     }
 
-    // 10 = tamanho da fila de conexoes aguardando accept()
-    if(listen(m_server_socket.get(), 10) < 0) {
+    // fila de conexoes aguardando accept(). Com 10, uma rajada de ~30 clientes perdia conexoes no macOS
+    // (o cliente via a conexao cair sem resposta); SOMAXCONN pede o maximo que o SO permite
+    if(listen(m_server_socket.get(), SOMAXCONN) < 0) {
         throw std::runtime_error("Falha no listen.\n");
     }
 
