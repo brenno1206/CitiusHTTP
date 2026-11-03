@@ -76,8 +76,8 @@ TEST(ThreadPoolTest, RejeitaTarefaQuandoAFilaEstaCheia) {
         }));
         iniciou.get_future().wait();
 
-        EXPECT_TRUE(pool.submit([&] { ++executadas; }));   // ocupa a unica vaga da fila
-        EXPECT_FALSE(pool.submit([&] { ++executadas; }));  // fila cheia: recusada
+        EXPECT_TRUE(pool.submit([&] { ++executadas; }));  // ocupa a unica vaga da fila
+        EXPECT_FALSE(pool.submit([&] { ++executadas; })); // fila cheia: recusada
 
         liberar.set_value();
     }

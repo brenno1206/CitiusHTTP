@@ -1,0 +1,105 @@
+name: CI
+
+# push em qualquer branch: os resultados aparecem no PR do mesmo commit, sem rodar duas vezes
+on:
+  push:
+  workflow_dispatch:
+
+# um push novo na mesma branch cancela a execução anterior, que ficou velha
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Compila (com warnings como erro) e roda os testes em macOS e Linux, com dois compiladores no Linux.
+  # O Linux é o que exercita PollerEpoll.cpp e o ramo MSG_NOSIGNAL do Socket.
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "macOS (Apple Clang)", os: macos-latest, cxx: clang++ }
+          - { name: "Ubuntu (gcc)", os: ubuntu-24.04, cxx: g++ }
+          - { name: "Ubuntu (clang)", os: ubuntu-24.04, cxx: clang++ }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCITIUS_WERROR=ON -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+      - name: Compilar
+        run: cmake --build build --parallel
+      - name: Testar
+        run: ctest --test-dir build --output-on-failure --parallel 2
+
+  # ASan+UBSan (memória e comportamento indefinido) e TSan (corridas de dados). Em builds separados:
+  # o ThreadSanitizer não combina com o AddressSanitizer.
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "ASan + UBSan", flag: CITIUS_SANITIZE }
+          - { name: "ThreadSanitizer", flag: CITIUS_TSAN }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCITIUS_WERROR=ON -DCMAKE_CXX_COMPILER=clang++ -D${{ matrix.flag }}=ON
+      - name: Compilar
+        run: cmake --build build --parallel
+      - name: Testar
+        # sem --parallel: sob sanitizer os testes de tempo ficam mais sensíveis à carga da máquina
+        run: ctest --test-dir build --output-on-failure
+
+  # Formatação: falha se algum arquivo não estiver como o clang-format deixaria. A versão é fixada
+  # (a mesma usada localmente): versões diferentes formatam de modo ligeiramente diferente.
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar clang-format
+        run: pip install clang-format==23.1.3
+      - name: Checar formatação
+        run: git ls-files 'src/*.cpp' 'include/*.hpp' 'tests/*.cpp' | xargs clang-format --dry-run --Werror
+
+  # Análise estática. Roda em Ubuntu e macOS porque cada um compila um Poller diferente (epoll / kqueue)
+  # e o clang-tidy só analisa o que está no compile_commands.json. Versão fixada, como o clang-format.
+  clang-tidy:
+    name: clang-tidy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar clang-tidy
+        run: pip install clang-tidy==23.1.4
+      - name: Configurar (gera compile_commands.json)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Analisar src/
+        run: |
+          # o clang-tidy do pip nao conhece o SDK da Apple: sem SDKROOT nao acha nem <errno.h>
+          if [ "$RUNNER_OS" = "macOS" ]; then export SDKROOT="$(xcrun --show-sdk-path)"; fi
+          # so os fontes do projeto (o compile_commands.json tambem lista o GoogleTest, baixado em build/_deps)
+          python - <<'PY' > files.txt
+          import json, os
+          src = os.path.abspath("src") + os.sep
+          for e in json.load(open("build/compile_commands.json")):
+              if os.path.abspath(e["file"]).startswith(src):
+                  print(e["file"])
+          PY
+          xargs clang-tidy -p build --quiet < files.txt

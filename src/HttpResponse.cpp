@@ -8,7 +8,7 @@ HttpResponse HttpResponse::make_error(StatusCode status) {
     HttpResponse response{status};
     response.set_body(std::to_string(static_cast<int>(status)) + " " + std::string(reason_phrase(status)) + "\n");
     // o cliente pode ter mandado lixo: nao vale tentar manter a conexao aberta depois de um erro
-    (void)response.set_header("Connection", "close");  // valores constantes e validos: nao falha
+    (void)response.set_header("Connection", "close"); // valores constantes e validos: nao falha
     return response;
 }
 
@@ -17,7 +17,8 @@ bool HttpResponse::set_header(std::string_view name, std::string_view value) {
         return false;
     }
 
-    auto existing = std::ranges::find_if(m_headers, [&](const auto& header) { return iequals(header.first, name); });
+    auto const existing =
+        std::ranges::find_if(m_headers, [&](const auto& header) { return iequals(header.first, name); });
     if (existing != m_headers.end()) {
         existing->second = std::string(value);
     } else {
@@ -29,7 +30,7 @@ bool HttpResponse::set_header(std::string_view name, std::string_view value) {
 void HttpResponse::set_body(std::string body, std::string_view content_type) {
     m_body = std::move(body);
     if (!content_type.empty()) {
-        (void)set_header("Content-Type", content_type);  // so falha com content_type invalido: o cabecalho fica de fora
+        (void)set_header("Content-Type", content_type); // so falha com content_type invalido: o cabecalho fica de fora
     }
 }
 

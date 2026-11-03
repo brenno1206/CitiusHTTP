@@ -44,7 +44,8 @@ bool Poller::remove(int fd) noexcept {
 
 std::vector<PollEvent> Poller::wait(std::chrono::milliseconds timeout) {
     std::array<epoll_event, kMaxEventsPerWait> raw;
-    const int n = epoll_wait(m_handle.get(), raw.data(), static_cast<int>(raw.size()), static_cast<int>(timeout.count()));
+    const int n =
+        epoll_wait(m_handle.get(), raw.data(), static_cast<int>(raw.size()), static_cast<int>(timeout.count()));
     if (n < 0) {
         if (errno == EINTR) return {};
         throw std::runtime_error("Falha no epoll_wait.");

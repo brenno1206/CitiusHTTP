@@ -30,10 +30,14 @@ public:
     Socket& operator=(Socket&& other) noexcept;
 
     /// @return o fd cru (para chamadas POSIX). Nao feche nem guarde alem da vida do Socket.
-    [[nodiscard]] int get() const noexcept { return m_fd; }
+    [[nodiscard]] int get() const noexcept {
+        return m_fd;
+    }
 
     /// @return true se ha um fd aberto sob posse deste objeto.
-    [[nodiscard]] bool valid() const noexcept { return m_fd >= 0; }
+    [[nodiscard]] bool valid() const noexcept {
+        return m_fd >= 0;
+    }
 
     /// Abre mao da posse sem fechar o fd.
     /// @return o fd; quem o receber passa a ser responsavel por fecha-lo.

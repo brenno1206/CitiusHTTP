@@ -1,0 +1,48 @@
+# Analise estatica. Foco: bugs reais e as regras do CLAUDE.md (RAII, const, sem new/delete).
+# Checks puramente estilisticos (trailing-return-type, magic-numbers, identifier-length...) ficam
+# de fora: brigam com o estilo do projeto e escondem os achados que importam.
+# Rodar:  cmake -S . -B build-tidy -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+#         clang-tidy -p build-tidy src/*.cpp
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-signed-bitwise,
+  clang-analyzer-*,
+  performance-*,
+  -performance-enum-size,
+  modernize-avoid-c-arrays,
+  modernize-loop-convert,
+  modernize-make-unique,
+  modernize-pass-by-value,
+  modernize-return-braced-init-list,
+  modernize-use-emplace,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-scoped-lock,
+  modernize-use-using,
+  readability-container-data-pointer,
+  readability-container-size-empty,
+  readability-function-cognitive-complexity,
+  readability-implicit-bool-conversion,
+  readability-math-missing-parentheses,
+  readability-misleading-indentation,
+  readability-redundant-*,
+  cppcoreguidelines-avoid-non-const-global-variables,
+  cppcoreguidelines-no-malloc,
+  cppcoreguidelines-owning-memory,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-special-member-functions,
+  cppcoreguidelines-virtual-class-destructor,
+  misc-const-correctness,
+  misc-redundant-expression,
+  misc-unused-*
+
+# Todo achado quebra o CI: nada de "depois eu vejo". Excecao justificada = NOLINT com o motivo.
+WarningsAsErrors: '*'
+
+# Analisa tambem os headers do projeto (mas nao os do sistema nem do GoogleTest)
+HeaderFilterRegex: '.*/include/citius/.*'

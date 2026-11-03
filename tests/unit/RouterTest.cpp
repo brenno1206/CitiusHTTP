@@ -188,7 +188,7 @@ TEST(RouterTest, RegistrarCaminhoInvalidoLancaExcecao) {
     Router router;
 
     EXPECT_THROW(router.get("", responde("x")), std::invalid_argument);
-    EXPECT_THROW(router.get("ping", responde("x")), std::invalid_argument);   // sem '/' inicial
+    EXPECT_THROW(router.get("ping", responde("x")), std::invalid_argument);      // sem '/' inicial
     EXPECT_THROW(router.get("/ping?x=1", responde("x")), std::invalid_argument); // query nao faz parte da rota
 }
 

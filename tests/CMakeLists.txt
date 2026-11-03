@@ -23,7 +23,6 @@ add_executable(citius_tests
     unit/RouterTest.cpp
     unit/ThreadPoolTest.cpp
     unit/SocketTest.cpp
-    unit/RequestReaderTest.cpp
     unit/PollerTest.cpp
     unit/RequestAssemblerTest.cpp
     unit/ConnectionTest.cpp
@@ -31,7 +30,7 @@ add_executable(citius_tests
 )
 set_target_properties(citius_tests PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(citius_tests PRIVATE citius_core GTest::gtest_main)
-target_compile_options(citius_tests PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(citius_tests PRIVATE ${CITIUS_WARNINGS})
 
 # TIMEOUT: um teste de rede que trave nao pode prender o ctest
 gtest_discover_tests(citius_tests PROPERTIES TIMEOUT 30)

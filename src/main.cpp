@@ -1,14 +1,15 @@
 #include "citius/Config.hpp"
 #include "citius/Logger.hpp"
 #include "citius/Server.hpp"
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <climits> // OPEN_MAX (macOS)
 #include <csignal>
 #include <cstddef>
 #include <exception>
 #include <format>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <sys/resource.h> // getrlimit(), setrlimit()
@@ -18,7 +19,8 @@ namespace {
 
 // O handler de sinal nao recebe argumentos, entao precisa achar o servidor por uma variavel global.
 // std::atomic de ponteiro e lock-free: ler e escrever dentro de um handler e permitido.
-std::atomic<citius::Server*> g_server = nullptr;
+std::atomic<citius::Server*> g_server = nullptr; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): o
+                                                 // handler de sinal so alcanca o servidor por aqui
 
 // Dentro de um handler quase nada e seguro (nada de cout, malloc, mutex); request_stop()
 // so grava um std::atomic<bool>, que e.
@@ -45,10 +47,13 @@ void raise_fd_limit(std::size_t max_connections) {
     rlimit limit{};
     if (getrlimit(RLIMIT_NOFILE, &limit) != 0) return;
 
-    rlim_t wanted = limit.rlim_max;
+    // macOS recusa mais que OPEN_MAX mesmo quando rlim_max e "ilimitado"; no Linux nao ha esse teto
 #ifdef OPEN_MAX
-    wanted = std::min<rlim_t>(wanted, OPEN_MAX); // macOS recusa mais que OPEN_MAX mesmo com rlim_max "ilimitado"
+    constexpr rlim_t kPlatformCap = OPEN_MAX;
+#else
+    constexpr rlim_t kPlatformCap = std::numeric_limits<rlim_t>::max();
 #endif
+    const rlim_t wanted = std::min(limit.rlim_max, kPlatformCap);
     if (wanted > limit.rlim_cur) {
         limit.rlim_cur = wanted;
         if (setrlimit(RLIMIT_NOFILE, &limit) != 0) getrlimit(RLIMIT_NOFILE, &limit);
@@ -56,21 +61,20 @@ void raise_fd_limit(std::size_t max_connections) {
     // alem das conexoes ha o socket de escuta, o kqueue/epoll, stdin/out/err e arquivos servidos
     constexpr rlim_t kReserved = 16;
     if (limit.rlim_cur < max_connections + kReserved) {
-        citius::log_warn(std::format("--max-connections {} nao cabe no limite de descritores ({}); acima dele os clientes falham com EMFILE.",
-                                     max_connections, static_cast<unsigned long long>(limit.rlim_cur)));
+        citius::log_warn(std::format(
+            "--max-connections {} nao cabe no limite de descritores ({}); acima dele os clientes falham com EMFILE.",
+            max_connections, static_cast<unsigned long long>(limit.rlim_cur)));
     }
 }
 
-} // namespace
-
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
     const char* program = argc > 0 ? argv[0] : "citius_server";
     // argv[0] e o nome do programa; os argumentos de verdade comecam em 1 (argc pode ser 0 em execucoes exoticas)
     std::vector<std::string_view> args;
     if (argc > 1) args.assign(argv + 1, argv + argc);
 
     // saida do operador (ajuda/erro de uso) vai direto ao terminal: o Logger ainda nao foi configurado
-    citius::ConfigResult parsed = citius::parse_config(args);
+    citius::ConfigResult const parsed = citius::parse_config(args);
     if (parsed.status == citius::ParseStatus::HELP) {
         std::cout << citius::config_usage(program);
         return 0;
@@ -103,4 +107,18 @@ int main(int argc, char** argv) {
         return 1;
     }
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // Rede de seguranca: excecao escapando de main chamaria std::terminate sem nenhuma mensagem
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& e) {
+        std::cerr << "Erro fatal: " << e.what() << '\n';
+    } catch (...) {
+        std::cerr << "Erro fatal desconhecido.\n";
+    }
+    return 1;
 }

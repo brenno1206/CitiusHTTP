@@ -26,11 +26,16 @@ std::string_view trim_ows(std::string_view text) {
 
 std::optional<ParseError> parse_method(std::string_view text, HttpMethod& method) {
     if (!is_token(text)) return ParseError::BAD_REQUEST;
-    if (text == "GET") method = HttpMethod::GET;
-    else if (text == "POST") method = HttpMethod::POST;
-    else if (text == "PUT") method = HttpMethod::PUT;
-    else if (text == "DELETE") method = HttpMethod::DELETE;
-    else return ParseError::NOT_IMPLEMENTED;
+    if (text == "GET")
+        method = HttpMethod::GET;
+    else if (text == "POST")
+        method = HttpMethod::POST;
+    else if (text == "PUT")
+        method = HttpMethod::PUT;
+    else if (text == "DELETE")
+        method = HttpMethod::DELETE;
+    else
+        return ParseError::NOT_IMPLEMENTED;
     return std::nullopt;
 }
 
@@ -39,9 +44,9 @@ std::optional<ParseError> validate_version(std::string_view version) {
     constexpr std::string_view kPrefix = "HTTP/";
     if (!version.starts_with(kPrefix)) return ParseError::BAD_REQUEST;
 
-    std::string_view numbers = version.substr(kPrefix.size());
-    bool well_formed = numbers.size() == 3 && std::isdigit(static_cast<unsigned char>(numbers[0])) &&
-                       numbers[1] == '.' && std::isdigit(static_cast<unsigned char>(numbers[2]));
+    std::string_view const numbers = version.substr(kPrefix.size());
+    bool const well_formed = numbers.size() == 3 && (std::isdigit(static_cast<unsigned char>(numbers[0])) != 0) &&
+                             numbers[1] == '.' && (std::isdigit(static_cast<unsigned char>(numbers[2])) != 0);
     if (!well_formed) return ParseError::BAD_REQUEST;
 
     if (version != "HTTP/1.1" && version != "HTTP/1.0") return ParseError::VERSION_NOT_SUPPORTED;
@@ -54,7 +59,7 @@ std::optional<ParseError> validate_target(std::string_view target) {
     // checa o tamanho antes de varrer os bytes: o alvo pode ter megabytes
     if (target.size() > HttpParser::kMaxTargetLength) return ParseError::URI_TOO_LONG;
     if (std::ranges::any_of(target, [](char c) {
-            auto u = static_cast<unsigned char>(c);
+            auto const u = static_cast<unsigned char>(c);
             return u <= 0x20 || u == 0x7f;
         })) {
         return ParseError::BAD_REQUEST;
@@ -65,14 +70,14 @@ std::optional<ParseError> validate_target(std::string_view target) {
 std::optional<ParseError> parse_request_line(std::string_view line, HttpRequest& request) {
     // metodo SP alvo SP versao (RFC 9112, secao 3); a versao ocupa o resto da linha,
     // entao um espaco sobrando faz a validacao da versao falhar
-    std::size_t first_space = line.find(' ');
+    std::size_t const first_space = line.find(' ');
     if (first_space == std::string_view::npos) return ParseError::BAD_REQUEST;
-    std::size_t second_space = line.find(' ', first_space + 1);
+    std::size_t const second_space = line.find(' ', first_space + 1);
     if (second_space == std::string_view::npos) return ParseError::BAD_REQUEST;
 
-    std::string_view method = line.substr(0, first_space);
-    std::string_view target = line.substr(first_space + 1, second_space - first_space - 1);
-    std::string_view version = line.substr(second_space + 1);
+    std::string_view const method = line.substr(0, first_space);
+    std::string_view const target = line.substr(first_space + 1, second_space - first_space - 1);
+    std::string_view const version = line.substr(second_space + 1);
 
     if (auto error = parse_method(method, request.method)) return error;
     if (auto error = validate_version(version)) return error;
@@ -87,12 +92,12 @@ std::optional<ParseError> parse_header_line(std::string_view line, HttpRequest::
                                             std::size_t& host_count) {
     if (has_control_chars(line)) return ParseError::BAD_REQUEST;
 
-    std::size_t colon = line.find(':');
+    std::size_t const colon = line.find(':');
     if (colon == std::string_view::npos) return ParseError::BAD_REQUEST;
 
     // is_token rejeita nome vazio, espaco antes dos ":" (usado em request smuggling) e linha que
     // comeca com espaco/HTAB ("obs-fold", continuacao da anterior, proibida em requisicoes)
-    std::string_view name = line.substr(0, colon);
+    std::string_view const name = line.substr(0, colon);
     if (!is_token(name)) return ParseError::BAD_REQUEST;
 
     std::string lower_name = to_lower_ascii(name);
@@ -110,7 +115,7 @@ std::optional<ParseError> parse_header_line(std::string_view line, HttpRequest::
 // Content-Length = 1*DIGIT (RFC 9110, secao 8.6). Valores repetidos chegam juntados com ", " e
 // por isso caem na regra "so digitos".
 std::optional<ParseError> parse_content_length(const HttpRequest::Headers& headers, std::size_t& length) {
-    auto it = headers.find("content-length");
+    auto const it = headers.find("content-length");
     if (it == headers.end()) return std::nullopt;
 
     const std::string& text = it->second;
@@ -120,8 +125,8 @@ std::optional<ParseError> parse_content_length(const HttpRequest::Headers& heade
 
     // acumula digito a digito parando assim que passa do limite: nunca estoura size_t
     std::size_t value = 0;
-    for (char c : text) {
-        value = value * 10 + static_cast<std::size_t>(c - '0');
+    for (char const c : text) {
+        value = (value * 10) + static_cast<std::size_t>(c - '0');
         if (value > HttpParser::kMaxBodyLength) return ParseError::PAYLOAD_TOO_LARGE;
     }
     length = value;
@@ -132,18 +137,24 @@ std::optional<ParseError> parse_content_length(const HttpRequest::Headers& heade
 
 StatusCode to_status(ParseError error) noexcept {
     switch (error) {
-        case ParseError::BAD_REQUEST: return StatusCode::BAD_REQUEST;
-        case ParseError::NOT_IMPLEMENTED: return StatusCode::NOT_IMPLEMENTED;
-        case ParseError::URI_TOO_LONG: return StatusCode::URI_TOO_LONG;
-        case ParseError::VERSION_NOT_SUPPORTED: return StatusCode::VERSION_NOT_SUPPORTED;
-        case ParseError::HEADERS_TOO_LARGE: return StatusCode::HEADERS_TOO_LARGE;
-        case ParseError::PAYLOAD_TOO_LARGE: return StatusCode::PAYLOAD_TOO_LARGE;
+    case ParseError::BAD_REQUEST:
+        return StatusCode::BAD_REQUEST;
+    case ParseError::NOT_IMPLEMENTED:
+        return StatusCode::NOT_IMPLEMENTED;
+    case ParseError::URI_TOO_LONG:
+        return StatusCode::URI_TOO_LONG;
+    case ParseError::VERSION_NOT_SUPPORTED:
+        return StatusCode::VERSION_NOT_SUPPORTED;
+    case ParseError::HEADERS_TOO_LARGE:
+        return StatusCode::HEADERS_TOO_LARGE;
+    case ParseError::PAYLOAD_TOO_LARGE:
+        return StatusCode::PAYLOAD_TOO_LARGE;
     }
-    return StatusCode::BAD_REQUEST;  // valor fora do enum: tratar como requisicao invalida
+    return StatusCode::BAD_REQUEST; // valor fora do enum: tratar como requisicao invalida
 }
 
 ParseResult HttpParser::parse(std::string_view raw_head) {
-    std::size_t line_end = raw_head.find(kCrlf);
+    std::size_t const line_end = raw_head.find(kCrlf);
     if (line_end == std::string_view::npos) return ParseResult::failure(ParseError::BAD_REQUEST);
 
     HttpRequest request;
@@ -155,11 +166,11 @@ ParseResult HttpParser::parse(std::string_view raw_head) {
     std::size_t header_lines = 0;
     std::size_t pos = line_end + kCrlf.size();
     while (true) {
-        std::size_t end = raw_head.find(kCrlf, pos);
-        // sem linha vazia final a cabeca esta incompleta (o read_request_head garante que existe)
+        std::size_t const end = raw_head.find(kCrlf, pos);
+        // sem linha vazia final a cabeca esta incompleta (o RequestAssembler garante que existe)
         if (end == std::string_view::npos) return ParseResult::failure(ParseError::BAD_REQUEST);
 
-        std::string_view line = raw_head.substr(pos, end - pos);
+        std::string_view const line = raw_head.substr(pos, end - pos);
         pos = end + kCrlf.size();
         if (line.empty()) break;
 

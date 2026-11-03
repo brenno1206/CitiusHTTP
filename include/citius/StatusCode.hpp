@@ -23,19 +23,32 @@ enum class StatusCode {
 /// @return a frase padrao do status ("Not Found"), ou "Unknown" para valor fora do enum.
 [[nodiscard]] constexpr std::string_view reason_phrase(StatusCode status) noexcept {
     switch (status) {
-        case StatusCode::OK: return "OK";
-        case StatusCode::BAD_REQUEST: return "Bad Request";
-        case StatusCode::FORBIDDEN: return "Forbidden";
-        case StatusCode::NOT_FOUND: return "Not Found";
-        case StatusCode::METHOD_NOT_ALLOWED: return "Method Not Allowed";
-        case StatusCode::REQUEST_TIMEOUT: return "Request Timeout";
-        case StatusCode::PAYLOAD_TOO_LARGE: return "Content Too Large";
-        case StatusCode::URI_TOO_LONG: return "URI Too Long";
-        case StatusCode::HEADERS_TOO_LARGE: return "Request Header Fields Too Large";
-        case StatusCode::INTERNAL_SERVER_ERROR: return "Internal Server Error";
-        case StatusCode::NOT_IMPLEMENTED: return "Not Implemented";
-        case StatusCode::SERVICE_UNAVAILABLE: return "Service Unavailable";
-        case StatusCode::VERSION_NOT_SUPPORTED: return "HTTP Version Not Supported";
+    case StatusCode::OK:
+        return "OK";
+    case StatusCode::BAD_REQUEST:
+        return "Bad Request";
+    case StatusCode::FORBIDDEN:
+        return "Forbidden";
+    case StatusCode::NOT_FOUND:
+        return "Not Found";
+    case StatusCode::METHOD_NOT_ALLOWED:
+        return "Method Not Allowed";
+    case StatusCode::REQUEST_TIMEOUT:
+        return "Request Timeout";
+    case StatusCode::PAYLOAD_TOO_LARGE:
+        return "Content Too Large";
+    case StatusCode::URI_TOO_LONG:
+        return "URI Too Long";
+    case StatusCode::HEADERS_TOO_LARGE:
+        return "Request Header Fields Too Large";
+    case StatusCode::INTERNAL_SERVER_ERROR:
+        return "Internal Server Error";
+    case StatusCode::NOT_IMPLEMENTED:
+        return "Not Implemented";
+    case StatusCode::SERVICE_UNAVAILABLE:
+        return "Service Unavailable";
+    case StatusCode::VERSION_NOT_SUPPORTED:
+        return "HTTP Version Not Supported";
     }
     return "Unknown";
 }

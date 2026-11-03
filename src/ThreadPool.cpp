@@ -19,7 +19,7 @@ ThreadPool::ThreadPool(std::size_t threads, std::size_t max_queue) : m_max_queue
 
 ThreadPool::~ThreadPool() {
     {
-        std::lock_guard lock{m_mutex};
+        std::scoped_lock const lock{m_mutex};
         m_stopping = true;
     }
     m_wake.notify_all();
@@ -28,7 +28,7 @@ ThreadPool::~ThreadPool() {
 
 bool ThreadPool::submit(Task task) {
     {
-        std::lock_guard lock{m_mutex};
+        std::scoped_lock const lock{m_mutex};
         if (m_stopping || m_queue.size() >= m_max_queue) {
             return false;
         }

@@ -1,8 +1,10 @@
 # CitiusHTTP
 
+[![CI](https://github.com/brenno1206/CitiusHTTP/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/brenno1206/CitiusHTTP/actions/workflows/ci.yml)
+
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção (Fases 0 a 7 concluídas). O servidor atende todos os clientes numa thread só, com um event loop (`kqueue`/`epoll`; acima de `--max-connections` responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fases 0 a 8 concluídas). O servidor atende todos os clientes numa thread só, com um event loop (`kqueue`/`epoll`; acima de `--max-connections` responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -114,6 +116,7 @@ CitiusHTTP/
 ├── CMakeLists.txt            build (biblioteca + executável + testes)
 ├── .clang-format             estilo de código automático
 ├── .clang-tidy               análise estática
+├── .github/workflows/        CI (GitHub Actions)
 ├── include/citius/           headers públicos
 │   ├── net/                  Socket.hpp, Poller.hpp, Listener.hpp
 │   ├── http/                 HttpRequest.hpp, HttpResponse.hpp, HttpParser.hpp,
@@ -124,7 +127,7 @@ CitiusHTTP/
 │   └── main.cpp
 ├── tests/                    testes unitários e de integração
 ├── www/                      arquivos estáticos servidos (index.html, style.css)
-└── docs/                     decisões de arquitetura (ADRs), benchmarks
+└── docs/                     adr/ (decisões de arquitetura) e benchmarks.md
 ```
 
 > O código atual ainda tem os headers soltos em `include/citius/`. A reorganização em subpastas ainda está pendente e será feita de forma gradual, uma camada por commit.
@@ -183,13 +186,13 @@ Evolução planejada, de simples a avançado:
 | **Warnings como disciplina** | `-Wall -Wextra -Wpedantic` (e `-Werror` no CI) |
 | **Sanitizers** | AddressSanitizer + UndefinedBehaviorSanitizer em builds de teste; ThreadSanitizer para concorrência |
 | **Testes automatizados** | GoogleTest: unitários (parser, router) e de integração (servidor real + cliente de teste) |
-| **Formatação automática** | `clang-format` |
-| **Análise estática** | `clang-tidy` |
-| **Integração contínua** | GitHub Actions compilando e testando em macOS e Linux |
+| **Formatação automática** | `clang-format` (versão fixada; o CI confere) ✅ |
+| **Análise estática** | `clang-tidy`, checks focados em bugs; o CI exige zero achados ✅ |
+| **Integração contínua** | GitHub Actions: macOS e Ubuntu (gcc e clang), ASan/UBSan, TSan, `-Werror`, `clang-format` e `clang-tidy` ✅ |
 | **Commits padronizados** | Conventional Commits (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`) |
 | **Branch por fase** | Uma branch e um PR por etapa do roadmap |
-| **Registro de decisões** | Arquivos curtos em `docs/` (ADRs) explicando *por que* escolhemos algo |
-| **Medição** | Benchmark com `wrk` ou `ab` antes e depois de otimizar |
+| **Registro de decisões** | Arquivos curtos em [`docs/adr/`](docs/adr/README.md) explicando *por que* escolhemos algo ✅ |
+| **Medição** | Benchmark com `wrk` antes e depois de otimizar, em [docs/benchmarks.md](docs/benchmarks.md) ✅ |
 
 ---
 
@@ -257,6 +260,40 @@ cmake --build build-tsan
 ctest --test-dir build-tsan --output-on-failure
 ```
 
+### Desempenho
+
+Medido com `wrk` (Release, Apple M3), antes e depois do event loop da Fase 7. Método completo, outros
+cenários e limitações em [docs/benchmarks.md](docs/benchmarks.md):
+
+| `/ping` | Thread pool (Fase 4-6) | Event loop (Fase 7) |
+|---|---|---|
+| 64 conexões | 183.817 req/s | **253.989 req/s** |
+| 1000 conexões | 84.303 req/s, 214 mil respostas 503 | **263.246 req/s**, nenhuma falha |
+| 3000 conexões | 15.280 req/s, quase tudo 503 | **234.142 req/s**, nenhuma falha |
+
+O custo da decisão: servir arquivo estático ficou ~2× mais lento (um handler de disco agora ocupa a
+thread única do loop). O raciocínio está em [docs/adr/0003](docs/adr/0003-event-loop-em-vez-de-thread-pool.md).
+
+### Qualidade e CI
+
+Todo push roda o [CI](.github/workflows/ci.yml): compila com warnings como erro e testa em macOS (Apple
+Clang) e Ubuntu (gcc e clang), roda ASan+UBSan e ThreadSanitizer, confere o `clang-format` e roda o
+`clang-tidy` (zero achados). Para repetir localmente, use as mesmas versões fixadas no CI:
+
+```bash
+pip install clang-format==23.1.3 clang-tidy==23.1.4        # ou: brew install llvm
+clang-format -i $(git ls-files 'src/*.cpp' 'include/*.hpp' 'tests/*.cpp')
+
+cmake -S . -B build-tidy                                    # gera compile_commands.json
+export SDKROOT=$(xcrun --show-sdk-path)                     # só no macOS: o clang-tidy do pip precisa do SDK
+git ls-files 'src/*.cpp' | grep -v PollerEpoll | xargs clang-tidy -p build-tidy   # PollerEpoll só compila no Linux
+
+cmake -S . -B build-ci -DCITIUS_WERROR=ON                   # warnings como erro, como no CI
+cmake --build build-ci
+```
+
+As decisões de arquitetura estão registradas em [docs/adr/](docs/adr/README.md).
+
 ---
 
 ## 6. Roadmap por fases
@@ -273,7 +310,7 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 | **5. HTTP robusto** ✅ | Keep-alive, timeouts, limites de tamanho, corpo da requisição (POST) com `Content-Length`, códigos de erro corretos | RFC 9112, defesa contra abuso |
 | **6. Observabilidade e configuração** ✅ | Logger com níveis, configuração por linha de comando/arquivo | Design de módulos transversais |
 | **7. Alta performance** ✅ | Event loop com `kqueue`/`epoll`, benchmarks, perfil | I/O assíncrono, medição |
-| **8. Acabamento profissional** | CI no GitHub Actions, sanitizers, clang-tidy, ADRs, README com resultados de benchmark | Engenharia de software |
+| **8. Acabamento profissional** ✅ | CI no GitHub Actions, sanitizers, clang-tidy, ADRs, README com resultados de benchmark | Engenharia de software |
 
 ---
 

@@ -34,7 +34,7 @@ struct SocketPair {
     }
 };
 
-}
+} // namespace
 
 TEST(PollerTest, SemNadaPronto_RetornaVazioSemBloquear) {
     Poller poller;

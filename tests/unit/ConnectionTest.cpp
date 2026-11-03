@@ -73,7 +73,9 @@ struct Fixture {
         conn = std::make_unique<Connection>(Socket{fds[1]}, std::move(handler), t0, options);
     }
 
-    void send(std::string_view data) { ASSERT_TRUE(peer.send_all(data)); }
+    void send(std::string_view data) {
+        ASSERT_TRUE(peer.send_all(data));
+    }
 };
 
 } // namespace

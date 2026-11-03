@@ -216,8 +216,7 @@ TEST(RequestAssemblerTest, CorpoGrandeDemaisDa413SemEsperarOCorpo) {
 
 TEST(RequestAssemblerTest, TransferEncodingComContentLengthDa400) {
     RequestAssembler assembler;
-    const std::string raw =
-        "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\nabc";
+    const std::string raw = "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\nabc";
 
     ASSERT_EQ(assembler.feed(raw), AssembleStatus::ERROR);
     EXPECT_EQ(assembler.error_status(), StatusCode::BAD_REQUEST);

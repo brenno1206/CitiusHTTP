@@ -10,8 +10,8 @@ namespace citius {
 namespace {
 
 // Opcoes que recebem valor. "--help" e tratada a parte (nao tem valor).
-constexpr std::array<std::string_view, 6> kOptions{"--port", "--root", "--max-connections",
-                                                   "--read-timeout-ms", "--idle-timeout-ms", "--log-level"};
+constexpr std::array<std::string_view, 6> kOptions{
+    "--port", "--root", "--max-connections", "--read-timeout-ms", "--idle-timeout-ms", "--log-level"};
 
 // Aceita so digitos: from_chars nao tolera espaco nem '+', e recusa '-' em tipo sem sinal.
 // Sem a checagem de 'ptr', "80x" passaria como 80.
@@ -39,19 +39,23 @@ std::optional<std::string> apply(Config& config, std::string_view name, std::str
     std::optional<std::string> error;
 
     if (name == "--port") {
-        if ((error = read_number(name, value, 0, 65535, number))) return error;
+        error = read_number(name, value, 0, 65535, number);
+        if (error) return error;
         config.port = static_cast<std::uint16_t>(number);
     } else if (name == "--root") {
         if (value.empty()) return std::format("valor invalido para {}: o caminho esta vazio", name);
         config.root = value;
     } else if (name == "--max-connections") {
-        if ((error = read_number(name, value, 1, 1'000'000, number))) return error;
+        error = read_number(name, value, 1, 1'000'000, number);
+        if (error) return error;
         config.max_connections = static_cast<std::size_t>(number);
     } else if (name == "--read-timeout-ms") {
-        if ((error = read_number(name, value, 1, 3'600'000, number))) return error;
+        error = read_number(name, value, 1, 3'600'000, number);
+        if (error) return error;
         config.read_timeout = std::chrono::milliseconds(number);
     } else if (name == "--idle-timeout-ms") {
-        if ((error = read_number(name, value, 1, 3'600'000, number))) return error;
+        error = read_number(name, value, 1, 3'600'000, number);
+        if (error) return error;
         config.idle_timeout = std::chrono::milliseconds(number);
     } else if (name == "--log-level") {
         auto level = parse_log_level(value);
@@ -84,7 +88,7 @@ ConfigResult parse_config(std::span<const std::string_view> args) {
         std::string_view name = arg;
         std::string_view value;
         bool has_value = false;
-        if (std::size_t eq = arg.find('='); eq != std::string_view::npos) {
+        if (std::size_t const eq = arg.find('='); eq != std::string_view::npos) {
             name = arg.substr(0, eq);
             value = arg.substr(eq + 1);
             has_value = true;
@@ -118,8 +122,8 @@ std::string config_usage(std::string_view program) {
         "  --idle-timeout-ms N   espera maxima da proxima requisicao numa conexao keep-alive (padrao {})\n"
         "  --log-level NIVEL     debug, info, warn ou error (padrao {})\n"
         "  -h, --help            mostra esta ajuda\n",
-        program, defaults.port, defaults.root.string(), defaults.max_connections,
-        defaults.read_timeout.count(), defaults.idle_timeout.count(), "info");
+        program, defaults.port, defaults.root.string(), defaults.max_connections, defaults.read_timeout.count(),
+        defaults.idle_timeout.count(), "info");
 }
 
 } // namespace citius

@@ -54,7 +54,7 @@ TEST(HttpParserTest, VersaoNaoIncluiOEspaco) {
 
 TEST(HttpParserTest, MetodoDesconhecidoEhNotImplemented) {
     espera_erro(req("FOO / HTTP/1.1"), ParseError::NOT_IMPLEMENTED);
-    espera_erro(req("get / HTTP/1.1"), ParseError::NOT_IMPLEMENTED);  // metodos sao case-sensitive
+    espera_erro(req("get / HTTP/1.1"), ParseError::NOT_IMPLEMENTED); // metodos sao case-sensitive
 }
 
 TEST(HttpParserTest, EntradaVaziaOuSemFimDeLinhaEhBadRequest) {
@@ -65,10 +65,10 @@ TEST(HttpParserTest, EntradaVaziaOuSemFimDeLinhaEhBadRequest) {
 TEST(HttpParserTest, LinhaDeRequisicaoMalformadaEhBadRequest) {
     espera_erro(req("GET"), ParseError::BAD_REQUEST);
     espera_erro(req("GET /"), ParseError::BAD_REQUEST);
-    espera_erro(req("GET  HTTP/1.1"), ParseError::BAD_REQUEST);          // alvo vazio
-    espera_erro(req("GET / "), ParseError::BAD_REQUEST);                 // versao vazia
-    espera_erro(req(" / HTTP/1.1"), ParseError::BAD_REQUEST);            // metodo vazio
-    espera_erro(req("GET / HTTP/1.1 extra"), ParseError::BAD_REQUEST);   // parte sobrando
+    espera_erro(req("GET  HTTP/1.1"), ParseError::BAD_REQUEST);        // alvo vazio
+    espera_erro(req("GET / "), ParseError::BAD_REQUEST);               // versao vazia
+    espera_erro(req(" / HTTP/1.1"), ParseError::BAD_REQUEST);          // metodo vazio
+    espera_erro(req("GET / HTTP/1.1 extra"), ParseError::BAD_REQUEST); // parte sobrando
 }
 
 // ---- versao ----
@@ -117,8 +117,8 @@ TEST(HttpParserTest, AlvoComCaracteresDeControleEhBadRequest) {
 }
 
 TEST(HttpParserTest, AlvoMuitoLongoEh414) {
-    const std::string no_limite = "/" + std::string(2047, 'a');   // 2048 bytes
-    const std::string acima = "/" + std::string(2048, 'a');       // 2049 bytes
+    const std::string no_limite = "/" + std::string(2047, 'a'); // 2048 bytes
+    const std::string acima = "/" + std::string(2048, 'a');     // 2049 bytes
 
     EXPECT_TRUE(HttpParser::parse(req("GET " + no_limite + " HTTP/1.1")).ok());
     espera_erro(req("GET " + acima + " HTTP/1.1"), ParseError::URI_TOO_LONG);
@@ -134,8 +134,8 @@ TEST(HttpParserTest, NaoQuebraComEntradaGiganteOuBinaria) {
 // ---- cabecalhos ----
 
 TEST(HttpParserTest, ParseiaCabecalhosComNomeEmMinusculas) {
-    ParseResult resultado = HttpParser::parse(
-        req("GET / HTTP/1.1", "Host: localhost:8080\r\nUser-Agent: curl/8.0\r\nACCEPT: */*\r\n"));
+    ParseResult resultado =
+        HttpParser::parse(req("GET / HTTP/1.1", "Host: localhost:8080\r\nUser-Agent: curl/8.0\r\nACCEPT: */*\r\n"));
 
     ASSERT_TRUE(resultado.ok());
     const auto& headers = resultado.request->headers;
@@ -146,8 +146,8 @@ TEST(HttpParserTest, ParseiaCabecalhosComNomeEmMinusculas) {
 }
 
 TEST(HttpParserTest, RemoveEspacosOpcionaisAoRedorDoValor) {
-    ParseResult resultado = HttpParser::parse(
-        req("GET / HTTP/1.1", "Host: x\r\nA:valor\r\nB:   com espacos \t\r\nC:\r\n"));
+    ParseResult resultado =
+        HttpParser::parse(req("GET / HTTP/1.1", "Host: x\r\nA:valor\r\nB:   com espacos \t\r\nC:\r\n"));
 
     ASSERT_TRUE(resultado.ok());
     const auto& headers = resultado.request->headers;
@@ -157,8 +157,8 @@ TEST(HttpParserTest, RemoveEspacosOpcionaisAoRedorDoValor) {
 }
 
 TEST(HttpParserTest, JuntaCabecalhosRepetidosComVirgula) {
-    ParseResult resultado = HttpParser::parse(
-        req("GET / HTTP/1.1", "Host: x\r\nAccept: text/html\r\nACCEPT: image/png\r\n"));
+    ParseResult resultado =
+        HttpParser::parse(req("GET / HTTP/1.1", "Host: x\r\nAccept: text/html\r\nACCEPT: image/png\r\n"));
 
     ASSERT_TRUE(resultado.ok());
     EXPECT_EQ(resultado.request->headers.at("accept"), "text/html, image/png");
@@ -179,8 +179,8 @@ TEST(HttpParserTest, CabecalhosSemLinhaVaziaFinalSaoBadRequest) {
 TEST(HttpParserTest, CabecalhoMalFormadoEhBadRequest) {
     const std::string linha = "GET / HTTP/1.1";
     espera_erro(req(linha, "Host: x\r\nSemDoisPontos\r\n"), ParseError::BAD_REQUEST);
-    espera_erro(req(linha, "Host: x\r\n: valor\r\n"), ParseError::BAD_REQUEST);        // nome vazio
-    espera_erro(req(linha, "Host: x\r\nB@d: v\r\n"), ParseError::BAD_REQUEST);         // nome nao e token
+    espera_erro(req(linha, "Host: x\r\n: valor\r\n"), ParseError::BAD_REQUEST); // nome vazio
+    espera_erro(req(linha, "Host: x\r\nB@d: v\r\n"), ParseError::BAD_REQUEST);  // nome nao e token
     espera_erro(req(linha, "Host: x\r\nNome Com Espaco: v\r\n"), ParseError::BAD_REQUEST);
 }
 
@@ -254,8 +254,7 @@ TEST(HttpParserTest, ContentLengthRepetidoDa400) {
 
 TEST(HttpParserTest, ContentLengthAcimaDoLimiteDa413) {
     auto acima = std::to_string(HttpParser::kMaxBodyLength + 1);
-    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: " + acima + "\r\n"),
-                ParseError::PAYLOAD_TOO_LARGE);
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: " + acima + "\r\n"), ParseError::PAYLOAD_TOO_LARGE);
     auto no_limite = std::to_string(HttpParser::kMaxBodyLength);
     EXPECT_TRUE(HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: " + no_limite + "\r\n")).ok());
 }

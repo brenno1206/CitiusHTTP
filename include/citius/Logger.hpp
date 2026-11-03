@@ -35,20 +35,30 @@ public:
     /// @param level nivel minimo: mensagens mais fracas sao ignoradas
     Logger(std::ostream& out, std::ostream& err, LogLevel level = LogLevel::INFO) noexcept;
 
+    // guarda referencias aos fluxos e um mutex: nao e copiavel nem movivel
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
+    Logger(Logger&&) = delete;
+    Logger& operator=(Logger&&) = delete;
+    ~Logger() = default;
 
     /// @return o Logger do processo, ligado a std::cout/std::cerr. Os testes criam o proprio Logger.
     [[nodiscard]] static Logger& instance();
 
     /// Muda o nivel minimo; pode ser chamado de qualquer thread, vale a partir da proxima mensagem.
-    void set_level(LogLevel level) noexcept { m_level.store(level); }
+    void set_level(LogLevel level) noexcept {
+        m_level.store(level);
+    }
 
-    [[nodiscard]] LogLevel level() const noexcept { return m_level.load(); }
+    [[nodiscard]] LogLevel level() const noexcept {
+        return m_level.load();
+    }
 
     /// @return true se uma mensagem de @p level seria escrita. Use para pular um trabalho caro de
     ///         montar a mensagem (ex.: std::format) quando ela seria descartada.
-    [[nodiscard]] bool enabled(LogLevel level) const noexcept { return level >= m_level.load(); }
+    [[nodiscard]] bool enabled(LogLevel level) const noexcept {
+        return level >= m_level.load();
+    }
 
     /// Escreve @p message no nivel @p level, se habilitado. Caracteres de controle (exceto TAB)
     /// viram '?': um valor vindo do cliente com "\n" nao pode forjar uma linha de log falsa.

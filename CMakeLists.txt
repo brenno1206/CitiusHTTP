@@ -1,6 +1,26 @@
 cmake_minimum_required(VERSION 3.20)
 project(CitiusHTTP LANGUAGES CXX)
 
+# Sem tipo de build escolhido, o CMake compila sem -g nem -O (fica pior que Debug e Release).
+# Debug e o padrao para desenvolvimento; para medir desempenho use -DCMAKE_BUILD_TYPE=Release
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Tipo de build" FORCE)
+endif()
+
+# compile_commands.json no diretorio de build: e o que o clang-tidy (e os editores) usam para saber
+# como cada arquivo e compilado
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Warnings como erro: cmake -S . -B build -DCITIUS_WERROR=ON. Fica desligado por padrao para que um
+# compilador novo, com warnings novos, nao impeca ninguem de compilar; o CI liga.
+option(CITIUS_WERROR "Trata warnings como erros" OFF)
+
+# Lista unica de warnings, usada pela biblioteca, pelo servidor e pelos testes
+set(CITIUS_WARNINGS -Wall -Wextra -Wpedantic)
+if(CITIUS_WERROR)
+    list(APPEND CITIUS_WARNINGS -Werror)
+endif()
+
 # Sanitizers (ASan + UBSan): cmake -S . -B build-asan -DCITIUS_SANITIZE=ON
 option(CITIUS_SANITIZE "Compila com AddressSanitizer e UndefinedBehaviorSanitizer" OFF)
 
@@ -19,7 +39,6 @@ add_library(citius_core STATIC
     src/Logger.cpp
     src/Config.cpp
     src/Socket.cpp
-    src/RequestReader.cpp
     src/RequestAssembler.cpp
     src/Connection.cpp
     src/Server.cpp
@@ -41,7 +60,7 @@ set_target_properties(citius_core PROPERTIES CXX_EXTENSIONS OFF)
 target_include_directories(citius_core PUBLIC include)
 
 # Habilitando os warnings do compilador para manter um código limpo
-target_compile_options(citius_core PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(citius_core PRIVATE ${CITIUS_WARNINGS})
 if(CITIUS_SANITIZE AND CITIUS_TSAN)
     message(FATAL_ERROR "CITIUS_SANITIZE e CITIUS_TSAN sao incompativeis: o ThreadSanitizer nao combina com o AddressSanitizer. Use um diretorio de build para cada.")
 endif()
@@ -59,7 +78,7 @@ endif()
 add_executable(citius_server src/main.cpp)
 set_target_properties(citius_server PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(citius_server PRIVATE citius_core)
-target_compile_options(citius_server PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(citius_server PRIVATE ${CITIUS_WARNINGS})
 
 # Testes (ctest --test-dir build)
 enable_testing()

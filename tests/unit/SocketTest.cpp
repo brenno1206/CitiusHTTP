@@ -4,8 +4,8 @@
 #include <chrono>
 #include <fcntl.h>
 #include <gtest/gtest.h>
-#include <sys/socket.h>
 #include <string>
+#include <sys/socket.h>
 #include <thread>
 #include <type_traits>
 #include <unistd.h>
@@ -161,7 +161,7 @@ TEST(SocketTest, SendAllEnviaTudoMesmoPayloadGrande) {
     });
 
     EXPECT_TRUE(emissor.send_all(payload));
-    emissor.reset();  // fecha para o leitor ver o fim
+    emissor.reset(); // fecha para o leitor ver o fim
     leitor.join();
 
     EXPECT_EQ(recebido.size(), payload.size());
@@ -176,7 +176,7 @@ TEST(SocketTest, SendAllFalhaSemMatarOProcessoQuandoOParFechou) {
     ASSERT_TRUE(emissor.set_no_sigpipe());
     receptor.reset();
 
-    EXPECT_FALSE(emissor.send_all("ola"));  // sem SIGPIPE ele derrubaria o teste
+    EXPECT_FALSE(emissor.send_all("ola")); // sem SIGPIPE ele derrubaria o teste
 }
 
 TEST(SocketTest, RecvSomeDevolveZeroQuandoOParFechou) {
@@ -201,7 +201,7 @@ TEST(SocketTest, RecvSomeDevolveErroEmSocketInvalido) {
 TEST(SocketTest, RecvTimeoutFazRecvSomeFalharComEagain) {
     int fds[2];
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
-    Socket emissor{fds[0]};  // fica aberto e mudo
+    Socket emissor{fds[0]}; // fica aberto e mudo
     Socket receptor{fds[1]};
     ASSERT_TRUE(receptor.set_recv_timeout(std::chrono::milliseconds(50)));
 
@@ -221,7 +221,7 @@ TEST(SocketTest, SetRecvTimeoutFalhaEmSocketInvalido) {
 TEST(SocketTest, SetNonblockingFazRecvSomeRetornarEagainSemEsperar) {
     int fds[2];
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
-    Socket emissor{fds[0]};  // aberto e mudo: um recv bloqueante ficaria parado
+    Socket emissor{fds[0]}; // aberto e mudo: um recv bloqueante ficaria parado
     Socket receptor{fds[1]};
     ASSERT_TRUE(receptor.set_nonblocking());
 

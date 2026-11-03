@@ -1,14 +1,14 @@
 #include "citius/Logger.hpp"
-#include <gtest/gtest.h>
 #include <algorithm>
+#include <gtest/gtest.h>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
-using citius::LogLevel;
 using citius::Logger;
+using citius::LogLevel;
 
 namespace {
 
@@ -92,7 +92,8 @@ TEST(LoggerTest, CaracteresDeControleNaoQuebramALinha) {
     // um valor vindo do cliente com \n poderia forjar uma linha de log falsa (log injection)
     LoggerDeTeste t;
 
-    t.logger.log(LogLevel::INFO, "a\nb\r[ERROR] falso\x01\x7f" "fim\ttab");
+    t.logger.log(LogLevel::INFO, "a\nb\r[ERROR] falso\x01\x7f"
+                                 "fim\ttab");
 
     std::string saida = t.out.str();
     EXPECT_EQ(std::count(saida.begin(), saida.end(), '\n'), 1) << saida;

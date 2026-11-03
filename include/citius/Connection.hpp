@@ -29,10 +29,13 @@ inline constexpr std::size_t kMaxRequestsPerConnection = 100;
 
 /// Ajustes de uma Connection.
 struct ConnectionOptions {
-    std::chrono::milliseconds read_timeout = kDefaultReadTimeout;   ///< prazo para a requisicao chegar inteira; estourou, 408
-    std::chrono::milliseconds idle_timeout = kDefaultIdleTimeout;   ///< prazo entre requisicoes; estourou, fecha em silencio
-    std::chrono::milliseconds write_timeout = kDefaultWriteTimeout; ///< prazo para a resposta sair inteira; estourou, fecha
-    std::size_t max_requests = kMaxRequestsPerConnection;           ///< requisicoes por conexao
+    std::chrono::milliseconds read_timeout =
+        kDefaultReadTimeout; ///< prazo para a requisicao chegar inteira; estourou, 408
+    std::chrono::milliseconds idle_timeout =
+        kDefaultIdleTimeout; ///< prazo entre requisicoes; estourou, fecha em silencio
+    std::chrono::milliseconds write_timeout =
+        kDefaultWriteTimeout;                             ///< prazo para a resposta sair inteira; estourou, fecha
+    std::size_t max_requests = kMaxRequestsPerConnection; ///< requisicoes por conexao
     std::size_t max_head_bytes = RequestAssembler::kDefaultMaxHeadBytes; ///< teto da cabeca; acima, 431
 };
 
@@ -65,14 +68,20 @@ public:
     Connection(Socket socket, Handler handler, Clock::time_point now, ConnectionOptions options = {});
 
     /// @return o fd, para registrar no Poller (-1 depois de fechada).
-    [[nodiscard]] int fd() const noexcept { return m_socket.get(); }
+    [[nodiscard]] int fd() const noexcept {
+        return m_socket.get();
+    }
 
     /// @return true se a conexao terminou e o fd ja foi fechado.
-    [[nodiscard]] bool closed() const noexcept { return m_state == State::CLOSED; }
+    [[nodiscard]] bool closed() const noexcept {
+        return m_state == State::CLOSED;
+    }
 
     /// @return o que o Poller deve vigiar: READ enquanto espera uma requisicao, WRITE enquanto
     ///         sobra resposta a enviar. Pode mudar depois de qualquer chamada abaixo.
-    [[nodiscard]] Interest interest() const noexcept { return m_state == State::WRITING ? Interest::WRITE : Interest::READ; }
+    [[nodiscard]] Interest interest() const noexcept {
+        return m_state == State::WRITING ? Interest::WRITE : Interest::READ;
+    }
 
     /// @return quando check_deadline() deve ser chamado; std::nullopt se a conexao ja fechou.
     [[nodiscard]] std::optional<Clock::time_point> deadline() const noexcept;
@@ -112,11 +121,11 @@ private:
     ConnectionOptions m_options;
     RequestAssembler m_assembler;
     State m_state = State::READING;
-    std::string m_out;                 ///< resposta serializada, ainda nao enviada por inteiro
-    std::size_t m_out_pos = 0;         ///< quantos bytes de m_out ja saíram
+    std::string m_out;         ///< resposta serializada, ainda nao enviada por inteiro
+    std::size_t m_out_pos = 0; ///< quantos bytes de m_out ja saíram
     bool m_close_after_write = false;
-    bool m_draining = false;           ///< close_when_idle() foi chamado
-    std::size_t m_served = 0;          ///< requisicoes ja atendidas nesta conexao
+    bool m_draining = false;  ///< close_when_idle() foi chamado
+    std::size_t m_served = 0; ///< requisicoes ja atendidas nesta conexao
     Clock::time_point m_deadline;
 };
 

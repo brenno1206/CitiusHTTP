@@ -32,13 +32,13 @@ void Router::set_fallback(Handler handler) {
 }
 
 HttpResponse Router::route(const HttpRequest& request) const {
-    auto route = m_routes.find(without_query(request.path));
+    auto const route = m_routes.find(without_query(request.path));
     if (route == m_routes.end()) {
         return m_fallback ? m_fallback(request) : HttpResponse::make_error(StatusCode::NOT_FOUND);
     }
 
     const MethodHandlers& handlers = route->second;
-    if (auto handler = handlers.find(request.method); handler != handlers.end()) {
+    if (auto const handler = handlers.find(request.method); handler != handlers.end()) {
         return handler->second(request);
     }
 

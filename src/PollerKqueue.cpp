@@ -20,8 +20,10 @@ bool apply(int kq, int fd, Interest interest) noexcept {
     const bool want_read = interest != Interest::WRITE;
     const bool want_write = interest != Interest::READ;
     std::array<struct kevent, 2> changes;
-    EV_SET(&changes[0], static_cast<std::uintptr_t>(fd), EVFILT_READ, EV_ADD | (want_read ? EV_ENABLE : EV_DISABLE), 0, 0, nullptr);
-    EV_SET(&changes[1], static_cast<std::uintptr_t>(fd), EVFILT_WRITE, EV_ADD | (want_write ? EV_ENABLE : EV_DISABLE), 0, 0, nullptr);
+    EV_SET(changes.data(), static_cast<std::uintptr_t>(fd), EVFILT_READ, EV_ADD | (want_read ? EV_ENABLE : EV_DISABLE),
+           0, 0, nullptr);
+    EV_SET(&changes[1], static_cast<std::uintptr_t>(fd), EVFILT_WRITE, EV_ADD | (want_write ? EV_ENABLE : EV_DISABLE),
+           0, 0, nullptr);
     return fd >= 0 && kevent(kq, changes.data(), static_cast<int>(changes.size()), nullptr, 0, nullptr) == 0;
 }
 
@@ -43,16 +45,18 @@ bool Poller::modify(int fd, Interest interest) noexcept {
 
 bool Poller::remove(int fd) noexcept {
     std::array<struct kevent, 2> changes;
-    EV_SET(&changes[0], static_cast<std::uintptr_t>(fd), EVFILT_READ, EV_DELETE, 0, 0, nullptr);
+    EV_SET(changes.data(), static_cast<std::uintptr_t>(fd), EVFILT_READ, EV_DELETE, 0, 0, nullptr);
     EV_SET(&changes[1], static_cast<std::uintptr_t>(fd), EVFILT_WRITE, EV_DELETE, 0, 0, nullptr);
-    return fd >= 0 && kevent(m_handle.get(), changes.data(), static_cast<int>(changes.size()), nullptr, 0, nullptr) == 0;
+    return fd >= 0 &&
+           kevent(m_handle.get(), changes.data(), static_cast<int>(changes.size()), nullptr, 0, nullptr) == 0;
 }
 
 std::vector<PollEvent> Poller::wait(std::chrono::milliseconds timeout) {
     std::array<struct kevent, kMaxEventsPerWait> raw;
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(timeout);
-    const timespec ts{.tv_sec = static_cast<time_t>(secs.count()),
-                      .tv_nsec = static_cast<long>(std::chrono::duration_cast<std::chrono::nanoseconds>(timeout - secs).count())};
+    const timespec ts{
+        .tv_sec = static_cast<time_t>(secs.count()),
+        .tv_nsec = static_cast<long>(std::chrono::duration_cast<std::chrono::nanoseconds>(timeout - secs).count())};
 
     const int n = kevent(m_handle.get(), nullptr, 0, raw.data(), static_cast<int>(raw.size()), &ts);
     if (n < 0) {

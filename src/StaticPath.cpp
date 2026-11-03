@@ -28,13 +28,13 @@ std::optional<std::string> decode_target_path(std::string_view target) {
         char c = target[i];
         if (c == '%') {
             // precisa haver dois caracteres depois do '%'
-            bool has_two = i + 2 < target.size();
-            int high = has_two ? hex_value(target[i + 1]) : -1;
-            int low = has_two ? hex_value(target[i + 2]) : -1;
+            bool const has_two = i + 2 < target.size();
+            int const high = has_two ? hex_value(target[i + 1]) : -1;
+            int const low = has_two ? hex_value(target[i + 2]) : -1;
             if (high < 0 || low < 0) {
                 return std::nullopt;
             }
-            c = static_cast<char>(high * 16 + low);
+            c = static_cast<char>((high * 16) + low);
             i += 2;
         }
         // NUL truncaria o caminho em chamadas de SO escritas em C ("a\0b" abriria "a")
@@ -59,8 +59,8 @@ std::optional<std::filesystem::path> resolve_static_path(const std::filesystem::
     const bool wants_index = decoded_path.back() == '/';
     fs::path relative;
     while (!decoded_path.empty()) {
-        std::size_t slash = decoded_path.find('/');
-        std::string_view segment = decoded_path.substr(0, slash);
+        std::size_t const slash = decoded_path.find('/');
+        std::string_view const segment = decoded_path.substr(0, slash);
         decoded_path = slash == std::string_view::npos ? std::string_view{} : decoded_path.substr(slash + 1);
 
         if (segment.empty() || segment == ".") {

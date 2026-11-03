@@ -29,11 +29,8 @@ HttpResponse close_with(StatusCode status) {
 } // namespace
 
 Connection::Connection(Socket socket, Handler handler, Clock::time_point now, ConnectionOptions options)
-    : m_socket(std::move(socket)),
-      m_handler(std::move(handler)),
-      m_options(options),
-      m_assembler(options.max_head_bytes),
-      m_deadline(now + options.read_timeout) {
+    : m_socket(std::move(socket)), m_handler(std::move(handler)), m_options(options),
+      m_assembler(options.max_head_bytes), m_deadline(now + options.read_timeout) {
     if (!m_socket.valid()) {
         m_state = State::CLOSED;
         return;
@@ -107,7 +104,8 @@ void Connection::drive(Clock::time_point now, std::string_view bytes) {
         HttpResponse response = respond_safely(request);
         // a RFC pede que o servidor avise quando vai fechar; "keep-alive" explicito tambem serve ao HTTP/1.0
         (void)response.set_header("Connection", keep_alive ? "keep-alive" : "close");
-        log_debug(std::format("{} {} -> {}", method_name(request.method), request.path, static_cast<int>(response.status())));
+        log_debug(
+            std::format("{} {} -> {}", method_name(request.method), request.path, static_cast<int>(response.status())));
 
         // se a resposta nao couber de uma vez, o estado vira WRITING e o laco para: a proxima
         // requisicao (ja guardada, se encadeada) espera a resposta sair

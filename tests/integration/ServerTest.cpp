@@ -6,15 +6,16 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
-#include <optional>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 using citius::Server;
@@ -22,17 +23,28 @@ using citius::Socket;
 
 namespace {
 
-// Pasta publica de teste (criada uma vez): index.html, style.css e um segredo FORA da raiz.
+// Pasta publica de teste (criada uma vez por processo): index.html, style.css e um segredo FORA da raiz.
+// O nome leva o pid porque o ctest roda cada teste num processo e, com --parallel, varios ao mesmo
+// tempo: uma pasta fixa seria apagada e recriada por um enquanto outro a usa.
 const std::filesystem::path& raiz_de_teste() {
-    static const std::filesystem::path root = [] {
-        auto base = std::filesystem::temp_directory_path() / "citius_server_test";
-        std::filesystem::remove_all(base);
-        std::filesystem::create_directories(base / "www");
-        std::ofstream{base / "www" / "index.html"} << "Hello Citius!";
-        std::ofstream{base / "www" / "style.css"} << "body{}";
-        std::ofstream{base / "secret.txt"} << "segredo";
-        return base / "www";
-    }();
+    struct Pasta {
+        std::filesystem::path base =
+            std::filesystem::temp_directory_path() / ("citius_server_test_" + std::to_string(::getpid()));
+
+        Pasta() {
+            std::filesystem::remove_all(base);
+            std::filesystem::create_directories(base / "www");
+            std::ofstream{base / "www" / "index.html"} << "Hello Citius!";
+            std::ofstream{base / "www" / "style.css"} << "body{}";
+            std::ofstream{base / "secret.txt"} << "segredo";
+        }
+        ~Pasta() {
+            std::error_code ignorado;
+            std::filesystem::remove_all(base, ignorado);
+        }
+    };
+    static const Pasta pasta;
+    static const std::filesystem::path root = pasta.base / "www";
     return root;
 }
 
@@ -137,13 +149,12 @@ TEST(ServerTest, ResponderGetValidoCom200) {
 
     std::string resposta = requisitar(server, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
-    EXPECT_EQ(resposta,
-              "HTTP/1.1 200 OK\r\n"
-              "Content-Type: text/html; charset=utf-8\r\n"
-              "Connection: keep-alive\r\n"
-              "Content-Length: 13\r\n"
-              "\r\n"
-              "Hello Citius!");
+    EXPECT_EQ(resposta, "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/html; charset=utf-8\r\n"
+                        "Connection: keep-alive\r\n"
+                        "Content-Length: 13\r\n"
+                        "\r\n"
+                        "Hello Citius!");
 }
 
 TEST(ServerTest, MontaRequisicaoEnviadaEmPedacos) {
@@ -172,8 +183,8 @@ TEST(ServerTest, HostAusenteEm11Da400) {
 TEST(ServerTest, MetodoDesconhecidoDa501) {
     Server server{0, raiz_de_teste()};
 
-    EXPECT_TRUE(comeca_com(requisitar(server, "FOO / HTTP/1.1\r\nHost: x\r\n\r\n"),
-                           "HTTP/1.1 501 Not Implemented\r\n"));
+    EXPECT_TRUE(
+        comeca_com(requisitar(server, "FOO / HTTP/1.1\r\nHost: x\r\n\r\n"), "HTTP/1.1 501 Not Implemented\r\n"));
 }
 
 TEST(ServerTest, VersaoNaoSuportadaDa505) {
@@ -200,8 +211,7 @@ TEST(ServerTest, MuitosCabecalhosDa431) {
     }
     requisicao += "\r\n";
 
-    EXPECT_TRUE(comeca_com(requisitar(server, requisicao),
-                           "HTTP/1.1 431 Request Header Fields Too Large\r\n"));
+    EXPECT_TRUE(comeca_com(requisitar(server, requisicao), "HTTP/1.1 431 Request Header Fields Too Large\r\n"));
 }
 
 TEST(ServerTest, CabecaMaiorQue8KbSemFimDa431) {
@@ -211,8 +221,7 @@ TEST(ServerTest, CabecaMaiorQue8KbSemFimDa431) {
     std::string requisicao = "GET / HTTP/1.1\r\nX: " + std::string(8193 - 19, 'a');
     ASSERT_EQ(requisicao.size(), 8193u);
 
-    EXPECT_TRUE(comeca_com(requisitar(server, requisicao),
-                           "HTTP/1.1 431 Request Header Fields Too Large\r\n"));
+    EXPECT_TRUE(comeca_com(requisitar(server, requisicao), "HTTP/1.1 431 Request Header Fields Too Large\r\n"));
 }
 
 TEST(ServerTest, ContentLengthDaRespostaCombinaComOCorpo) {
@@ -230,7 +239,9 @@ TEST(ServerTest, ClienteQueFechaSemEnviarNadaNaoDerrubaOServidor) {
     Server server{0, raiz_de_teste()};
 
     std::thread servidor([&] { server.serve_one(); });
-    { Socket cliente = conectar(server.port()); }  // conecta e fecha
+    {
+        Socket cliente = conectar(server.port());
+    } // conecta e fecha
     servidor.join();
 
     // o proximo cliente e atendido normalmente
@@ -258,8 +269,8 @@ TEST(ServerTest, ServeCssComTipoCerto) {
 TEST(ServerTest, ArquivoInexistenteDa404) {
     Server server{0, raiz_de_teste()};
 
-    EXPECT_TRUE(comeca_com(requisitar(server, "GET /nao-existe HTTP/1.1\r\nHost: x\r\n\r\n"),
-                           "HTTP/1.1 404 Not Found\r\n"));
+    EXPECT_TRUE(
+        comeca_com(requisitar(server, "GET /nao-existe HTTP/1.1\r\nHost: x\r\n\r\n"), "HTTP/1.1 404 Not Found\r\n"));
 }
 
 TEST(ServerTest, PathTraversalNaoVazaArquivoDeForaDaRaiz) {
@@ -409,7 +420,7 @@ TEST(ServerConcorrenciaTest, ParadaTerminaOClienteEmAndamento) {
 
     Socket cliente = conectar(server.port());
     EXPECT_TRUE(cliente.send_all("GET /index.html HTTP/1.1\r\nHost: x\r\n")); // requisicao incompleta
-    esperar(150);                                                                  // servidor ja aceitou
+    esperar(150);                                                             // servidor ja aceitou
 
     server.request_stop();
     esperar(250); // run() ja saiu do laco de accept e esta esperando este cliente
@@ -466,7 +477,8 @@ TEST(ServerConcorrenciaTest, QuinhentasConexoesAbertasAoMesmoTempoSaoTodasAtendi
     for (int i = 0; i < kClientes; ++i) {
         ssize_t n = clientes[i].recv_some(buffer);
         ASSERT_GT(n, 0) << "cliente " << i;
-        EXPECT_TRUE(comeca_com(std::string(buffer.data(), static_cast<std::size_t>(n)), "HTTP/1.1 200 OK\r\n")) << "cliente " << i;
+        EXPECT_TRUE(comeca_com(std::string(buffer.data(), static_cast<std::size_t>(n)), "HTTP/1.1 200 OK\r\n"))
+            << "cliente " << i;
     }
 }
 
@@ -543,8 +555,9 @@ TEST(ServerTest, CorpoEnviadoEmPedacosLentosEJuntado) {
     Server server{0, raiz_de_teste()};
     registrar_eco(server);
 
-    std::string resposta = requisitar(server, std::vector<std::string>{
-        "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc", "def", "ghij"});
+    std::string resposta =
+        requisitar(server, std::vector<std::string>{"POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc",
+                                                    "def", "ghij"});
 
     EXPECT_TRUE(resposta.ends_with("\r\n\r\nabcdefghij")) << resposta;
 }
@@ -626,7 +639,9 @@ struct LeitorDeRespostas {
     }
 
     // true se o servidor fechou a conexao (EOF) sem enviar mais nada.
-    bool fechada() { return buffer.empty() && !ler_mais(); }
+    bool fechada() {
+        return buffer.empty() && !ler_mais();
+    }
 
 private:
     bool ler_mais() {
@@ -650,7 +665,7 @@ TEST(ServerKeepAliveTest, DuasRequisicoesNaMesmaConexao) {
 
     ASSERT_TRUE(cliente.send_all(kGetIndex));
     std::string primeira = leitor.proxima();
-    ASSERT_TRUE(cliente.send_all(kGetIndex));  // mesma conexao: se o servidor tivesse fechado, falharia
+    ASSERT_TRUE(cliente.send_all(kGetIndex)); // mesma conexao: se o servidor tivesse fechado, falharia
     std::string segunda = leitor.proxima();
 
     EXPECT_TRUE(comeca_com(primeira, "HTTP/1.1 200 OK\r\n")) << primeira;
@@ -740,7 +755,7 @@ TEST(ServerKeepAliveTest, ErroNaSegundaRequisicaoNaoAfetaAPrimeira) {
     std::string ok = leitor.proxima();
     ASSERT_TRUE(cliente.send_all("GET /nao-existe HTTP/1.1\r\nHost: x\r\n\r\n"));
     std::string nao_achou = leitor.proxima();
-    ASSERT_TRUE(cliente.send_all(kGetIndex));  // 404 e resposta normal: a conexao segue viva
+    ASSERT_TRUE(cliente.send_all(kGetIndex)); // 404 e resposta normal: a conexao segue viva
     std::string de_novo = leitor.proxima();
 
     EXPECT_TRUE(comeca_com(ok, "HTTP/1.1 200")) << ok;
@@ -794,13 +809,13 @@ TEST(ServerKeepAliveTest, ConexaoFechaNoLimiteDeRequisicoes) {
 TEST(ServerKeepAliveTest, PedidoDeParadaFechaConexoesOciosas) {
     std::optional<ServidorEmExecucao> exec;
     exec.emplace();
-    Socket cliente = conectar(exec->server.port());  // continua aberto durante a parada
+    Socket cliente = conectar(exec->server.port()); // continua aberto durante a parada
     LeitorDeRespostas leitor{cliente};
     ASSERT_TRUE(cliente.send_all(kGetIndex));
     ASSERT_FALSE(leitor.proxima().empty());
 
     auto inicio = std::chrono::steady_clock::now();
-    exec.reset();  // request_stop + join: sem o poll em fatias, esperaria o prazo de ociosidade (5 s)
+    exec.reset(); // request_stop + join: sem o poll em fatias, esperaria o prazo de ociosidade (5 s)
 
     EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::seconds(2));
 }

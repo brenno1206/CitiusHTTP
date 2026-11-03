@@ -27,7 +27,9 @@ struct ParseResult {
     std::optional<HttpRequest> request; ///< preenchido se, e somente se, o parse deu certo
     std::optional<ParseError> error;    ///< preenchido se, e somente se, o parse falhou
 
-    [[nodiscard]] bool ok() const noexcept { return request.has_value(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return request.has_value();
+    }
 
     [[nodiscard]] static ParseResult success(HttpRequest request) {
         return ParseResult{std::move(request), std::nullopt};
@@ -40,8 +42,8 @@ struct ParseResult {
 /// Interpreta texto HTTP bruto. Nao conhece sockets: recebe texto e devolve estruturas.
 class HttpParser {
 public:
-    static constexpr std::size_t kMaxTargetLength = 2048; ///< bytes do alvo ("/caminho?query")
-    static constexpr std::size_t kMaxHeaderCount = 64;    ///< linhas de cabecalho
+    static constexpr std::size_t kMaxTargetLength = 2048;      ///< bytes do alvo ("/caminho?query")
+    static constexpr std::size_t kMaxHeaderCount = 64;         ///< linhas de cabecalho
     static constexpr std::size_t kMaxBodyLength = 1024 * 1024; ///< bytes de corpo aceitos (1 MB)
 
     /// Interpreta a cabeca de uma requisicao: linha de requisicao + cabecalhos + linha vazia

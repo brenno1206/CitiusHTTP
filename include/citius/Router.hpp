@@ -24,11 +24,19 @@ public:
 
     /// Registra @p handler para GET @p path. Registrar de novo o mesmo par substitui o anterior.
     /// @throws std::invalid_argument se @p path nao comecar com '/', tiver '?' ou @p handler for vazio.
-    void get(std::string_view path, Handler handler) { add(HttpMethod::GET, path, std::move(handler)); }
-    void post(std::string_view path, Handler handler) { add(HttpMethod::POST, path, std::move(handler)); }
-    void put(std::string_view path, Handler handler) { add(HttpMethod::PUT, path, std::move(handler)); }
+    void get(std::string_view path, Handler handler) {
+        add(HttpMethod::GET, path, std::move(handler));
+    }
+    void post(std::string_view path, Handler handler) {
+        add(HttpMethod::POST, path, std::move(handler));
+    }
+    void put(std::string_view path, Handler handler) {
+        add(HttpMethod::PUT, path, std::move(handler));
+    }
     /// "delete" e palavra reservada do C++, por isso o nome e del().
-    void del(std::string_view path, Handler handler) { add(HttpMethod::DELETE, path, std::move(handler)); }
+    void del(std::string_view path, Handler handler) {
+        add(HttpMethod::DELETE, path, std::move(handler));
+    }
 
     /// Registra @p handler para @p method e @p path. Mesmas regras e excecoes de get().
     void add(HttpMethod method, std::string_view path, Handler handler);
