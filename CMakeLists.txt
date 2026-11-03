@@ -20,6 +20,7 @@ add_library(citius_core STATIC
     src/Config.cpp
     src/Socket.cpp
     src/RequestReader.cpp
+    src/RequestAssembler.cpp
     src/Server.cpp
 )
 
