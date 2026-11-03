@@ -2,7 +2,7 @@
 
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção (Fases 0, 1, 2, 3 e 4 concluídas). O servidor aceita conexões e as atende em paralelo com um thread pool (fila cheia responde 503; Ctrl+C encerra de forma graciosa); cada requisição é lida inteira em laço (limite de 8 KB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fases 0 a 5 concluídas). O servidor aceita conexões e as atende em paralelo com um thread pool (fila cheia responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -172,7 +172,7 @@ Esta é a lista do que o projeto vai usar, o que significa e por quê.
 Evolução planejada, de simples a avançado:
 
 1. ~~**Sequencial**: um cliente por vez.~~ (`serve_one()` ainda existe, usado nos testes)
-2. **Thread pool** com fila de tarefas (`std::jthread`, `std::mutex`, `std::condition_variable`) ✅ (hoje). Fila cheia responde `503`; `SIGINT`/`SIGTERM` param de aceitar e terminam os clientes em andamento.
+2. **Thread pool** com fila de tarefas (`std::jthread`, `std::mutex`, `std::condition_variable`) ✅ (hoje). Fila cheia responde `503`; `SIGINT`/`SIGTERM` param de aceitar e terminam os clientes em andamento. Com keep-alive, cada conexão aberta ocupa uma thread até fechar: é o limite que o event loop resolve.
 3. **Event loop** com `kqueue` (macOS) / `epoll` (Linux) atrás de uma interface comum, para milhares de conexões com poucas threads.
 
 ### 4.4 Engenharia e processo
@@ -253,7 +253,7 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 | **2. Arquivos estáticos** ✅ | Servir `www/`, tipos MIME, 404, proteção contra path traversal, `Content-Length` correto | Sistema de arquivos (`std::filesystem`), segurança |
 | **3. Roteamento** ✅ | `Router` com handlers registráveis (`router.get("/ping", ...)`), 405 Method Not Allowed | `std::function`, design de API |
 | **4. Concorrência** ✅ | Thread pool; tratamento de múltiplos clientes; encerramento gracioso | Threads, mutex, condition variable, sinais |
-| **5. HTTP robusto** | Keep-alive, timeouts, limites de tamanho, corpo da requisição (POST) com `Content-Length`, códigos de erro corretos | RFC 9112, defesa contra abuso |
+| **5. HTTP robusto** ✅ | Keep-alive, timeouts, limites de tamanho, corpo da requisição (POST) com `Content-Length`, códigos de erro corretos | RFC 9112, defesa contra abuso |
 | **6. Observabilidade e configuração** | Logger com níveis, configuração por linha de comando/arquivo | Design de módulos transversais |
 | **7. Alta performance** | Event loop com `kqueue`/`epoll`, benchmarks, perfil | I/O assíncrono, medição |
 | **8. Acabamento profissional** | CI no GitHub Actions, sanitizers, clang-tidy, ADRs, README com resultados de benchmark | Engenharia de software |
