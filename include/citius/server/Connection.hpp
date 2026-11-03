@@ -6,7 +6,9 @@
 #include "citius/parse/RequestAssembler.hpp"
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -37,6 +39,12 @@ inline constexpr std::size_t kMaxLingerBytes = 1024 * 1024;
 /// conexoes o wrk viu ~1.000-2.000 erros de leitura; com 1000, nenhum (docs/benchmarks.md). Configuravel por
 /// Server::set_max_requests_per_connection e --max-requests.
 inline constexpr std::size_t kMaxRequestsPerConnection = 1000;
+
+/// Velocidade minima de leitura que se espera de um cliente (bytes por segundo). O prazo para uma resposta sair
+/// e write_timeout MAIS o tempo que o cliente levaria nessa velocidade: uma resposta pequena segue o prazo base, e
+/// um arquivo de centenas de MB nao e cortado por ser grande, mas quem le mais devagar que isso (slow read) e
+/// considerado parado e desconectado.
+inline constexpr std::size_t kMinWriteBytesPerSecond = 16 * 1024;
 
 /// Ajustes de uma Connection.
 struct ConnectionOptions {
@@ -140,6 +148,9 @@ private:
     void finish_write(Clock::time_point now);
     /// Manda o FIN e passa a esperar o cliente fechar; se nao der, fecha.
     void begin_lingering(Clock::time_point now);
+    /// Le o proximo pedaco do arquivo da resposta para m_out. @return false se nao deu (o arquivo encolheu ou a leitura
+    /// falhou): a conexao foi fechada, porque nao se cumpre mais o Content-Length ja enviado.
+    bool refill_from_file();
     /// Envia "HTTP/1.1 100 Continue" (resposta interina) quando o cliente pediu Expect: 100-continue.
     void send_interim_continue() noexcept;
     void discard_input();
@@ -150,8 +161,11 @@ private:
     ConnectionOptions m_options;
     RequestAssembler m_assembler;
     State m_state = State::READING;
-    std::string m_out;         ///< resposta serializada, ainda nao enviada por inteiro
-    std::size_t m_out_pos = 0; ///< quantos bytes de m_out ja saíram
+    std::string m_out;                            ///< resposta serializada, ainda nao enviada por inteiro
+    std::shared_ptr<const FileDescriptor> m_file; ///< arquivo que e o corpo da resposta atual (streaming), ou nulo
+    std::uint64_t m_file_offset = 0;              ///< proxima posicao a ler do arquivo
+    std::uint64_t m_file_remaining = 0;           ///< bytes do arquivo ainda por enviar
+    std::size_t m_out_pos = 0;                    ///< quantos bytes de m_out ja saíram
     bool m_close_after_write = false;
     bool m_draining = false;     ///< close_when_idle() foi chamado
     std::size_t m_discarded = 0; ///< bytes descartados em LINGERING

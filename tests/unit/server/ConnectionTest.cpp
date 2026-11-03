@@ -2,11 +2,16 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
+#include <fcntl.h>
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
+#include <unistd.h>
 #include <vector>
 
 using citius::Connection;
@@ -336,11 +341,24 @@ TEST(ConnectionTest, ClienteQueNaoLeEstouraOPrazoDeEscrita) {
     f.conn->on_readable(f.t0);
     ASSERT_EQ(f.conn->interest(), Interest::WRITE);
 
-    f.conn->check_deadline(f.t0 + 1999ms);
+    // write_timeout + tempo para o cliente "ler" a resposta na velocidade minima (kMinWriteBytesPerSecond)
+    const auto limite =
+        f.t0 + 2000ms + std::chrono::milliseconds(4ull * 1024 * 1024 * 1000 / citius::kMinWriteBytesPerSecond);
+    f.conn->check_deadline(limite - 1s); // a cabeca (~100 bytes) a mais cabe nessa folga de 1 s
     EXPECT_FALSE(f.conn->closed());
 
-    f.conn->check_deadline(f.t0 + 2000ms); // write_timeout
+    f.conn->check_deadline(limite + 1s);
     EXPECT_TRUE(f.conn->closed());
+}
+
+TEST(ConnectionTest, RespostaPequenaTemSoOPrazoBaseDeEscrita) {
+    // abaixo do limite do buffer do socket a resposta sai de uma vez: o prazo de escrita nem chega a valer
+    Fixture f;
+    f.send(kGet);
+    f.conn->on_readable(f.t0);
+
+    ASSERT_TRUE(f.conn->deadline().has_value());
+    EXPECT_EQ(*f.conn->deadline(), f.t0 + 500ms); // ja voltou a READING: ociosidade
 }
 
 // ---- prazos ----------------------------------------------------------------------------------
@@ -733,4 +751,135 @@ TEST(ConnectionTest, CorpoGrandeDemaisComExpectDa413SemInterino) {
     const std::string response = drain(f.peer);
     EXPECT_TRUE(contains(response, "413"));
     EXPECT_FALSE(contains(response, "100 Continue")); // nao convida o cliente a enviar o que vai ser recusado
+}
+
+// ---- corpo de arquivo (streaming) -------------------------------------------------------------------------------
+
+namespace {
+
+// Arquivo temporario com um padrao previsivel (nao so um byte repetido: um deslocamento errado seria detectado).
+class ArquivoTemporario {
+public:
+    explicit ArquivoTemporario(std::size_t tamanho)
+        : m_path(std::filesystem::temp_directory_path() /
+                 ("citius_conn_" + std::to_string(::getpid()) + "_" +
+                  ::testing::UnitTest::GetInstance()->current_test_info()->name())) {
+        std::string dados(tamanho, '\0');
+        for (std::size_t i = 0; i < tamanho; ++i) dados[i] = static_cast<char>(i % 251);
+        std::ofstream{m_path, std::ios::binary} << dados;
+        m_conteudo = std::move(dados);
+    }
+    ~ArquivoTemporario() {
+        std::error_code ignorado;
+        std::filesystem::remove(m_path, ignorado);
+    }
+    ArquivoTemporario(const ArquivoTemporario&) = delete;
+    ArquivoTemporario& operator=(const ArquivoTemporario&) = delete;
+
+    [[nodiscard]] const std::filesystem::path& path() const {
+        return m_path;
+    }
+    [[nodiscard]] const std::string& conteudo() const {
+        return m_conteudo;
+    }
+
+    // Handler que responde com este arquivo como corpo de arquivo (promete @p prometido bytes).
+    [[nodiscard]] Connection::Handler handler(std::size_t prometido) const {
+        return [path = m_path, prometido](const HttpRequest&) {
+            HttpResponse response;
+            response.set_file_body(citius::FileDescriptor{::open(path.c_str(), O_RDONLY)}, prometido,
+                                   "application/octet-stream");
+            return response;
+        };
+    }
+
+private:
+    std::filesystem::path m_path;
+    std::string m_conteudo;
+};
+
+} // namespace
+
+TEST(ConnectionTest, ArquivoGrandeSaiEmPedacosEChegaIntegro) {
+    constexpr std::size_t kTamanho = 3 * 1024 * 1024 + 123; // nao multiplo do pedaco de leitura
+    ArquivoTemporario arquivo{kTamanho};
+    Fixture f(arquivo.handler(kTamanho));
+    f.send(kGet);
+
+    f.conn->on_readable(f.t0);
+    ASSERT_FALSE(f.conn->closed());
+    EXPECT_EQ(f.conn->interest(), Interest::WRITE); // nao coube de uma vez
+
+    const std::string recebido = pump(f, f.t0);
+
+    const std::size_t fim_da_cabeca = recebido.find("\r\n\r\n") + 4;
+    EXPECT_TRUE(contains(recebido.substr(0, fim_da_cabeca), "Content-Length: " + std::to_string(kTamanho) + "\r\n"));
+    EXPECT_EQ(recebido.size() - fim_da_cabeca, kTamanho);
+    EXPECT_EQ(recebido.substr(fim_da_cabeca), arquivo.conteudo()); // todos os bytes, na ordem certa
+    EXPECT_EQ(f.conn->interest(), Interest::READ);
+    EXPECT_FALSE(f.conn->closed()); // keep-alive continua valendo
+}
+
+TEST(ConnectionTest, ProximaRequisicaoEsperaOArquivoSair) {
+    constexpr std::size_t kTamanho = 2 * 1024 * 1024;
+    ArquivoTemporario arquivo{kTamanho};
+    Fixture f(arquivo.handler(kTamanho));
+    f.send(std::string(kGet) + std::string(kGet)); // duas requisicoes encadeadas
+
+    f.conn->on_readable(f.t0);
+    ASSERT_EQ(f.conn->interest(), Interest::WRITE);
+
+    const std::string recebido = pump(f, f.t0);
+
+    EXPECT_EQ(count(recebido, "HTTP/1.1 200 OK"), 2u);
+    EXPECT_EQ(recebido.size(), 2 * (kTamanho + recebido.find("\r\n\r\n") + 4));
+}
+
+// Se o arquivo encolhe depois de o Content-Length ser enviado, nao ha como cumprir o que se prometeu: o unico
+// comportamento correto e encerrar a conexao (o cliente ve o corpo curto e sabe que a resposta esta incompleta).
+TEST(ConnectionTest, ArquivoQueEncolheDuranteOEnvioFechaAConexao) {
+    constexpr std::size_t kTamanho = 1024 * 1024;
+    ArquivoTemporario arquivo{kTamanho};
+    Fixture f(arquivo.handler(kTamanho));
+    ASSERT_EQ(::truncate(arquivo.path().c_str(), 10 * 1024), 0); // encolhe antes de o envio comecar
+    f.send(kGet);
+
+    f.conn->on_readable(f.t0);
+    const std::string recebido = pump(f, f.t0);
+
+    EXPECT_TRUE(f.conn->closed());
+    EXPECT_LT(recebido.size(), kTamanho); // o cliente recebeu menos do que foi prometido
+}
+
+TEST(ConnectionTest, PrazoDeEscritaDeArquivoCresceComOTamanho) {
+    constexpr std::size_t kTamanho = 3 * 1024 * 1024;
+    ArquivoTemporario arquivo{kTamanho};
+    Fixture f(arquivo.handler(kTamanho));
+    f.send(kGet);
+    f.conn->on_readable(f.t0); // o cliente nunca le
+
+    ASSERT_EQ(f.conn->interest(), Interest::WRITE);
+    const auto extra = std::chrono::milliseconds(kTamanho * 1000ull / citius::kMinWriteBytesPerSecond);
+    ASSERT_TRUE(f.conn->deadline().has_value());
+    EXPECT_GE(*f.conn->deadline(), f.t0 + 2000ms + extra);      // write_timeout + tempo na velocidade minima
+    EXPECT_LT(*f.conn->deadline(), f.t0 + 2000ms + extra + 1s); // so a cabeca a mais
+
+    f.conn->check_deadline(f.t0 + 2000ms + extra - 1ms);
+    EXPECT_FALSE(f.conn->closed());
+    f.conn->check_deadline(f.t0 + 2000ms + extra + 1s);
+    EXPECT_TRUE(f.conn->closed());
+}
+
+TEST(ConnectionTest, FecharAConexaoNoMeioDoArquivoLiberaODescritor) {
+    constexpr std::size_t kTamanho = 3 * 1024 * 1024;
+    ArquivoTemporario arquivo{kTamanho};
+    Fixture f(arquivo.handler(kTamanho));
+    f.send(kGet);
+    f.conn->on_readable(f.t0);
+    ASSERT_EQ(f.conn->interest(), Interest::WRITE);
+
+    f.peer.reset(); // o cliente some no meio do download
+    f.conn->on_writable(f.t0);
+
+    EXPECT_TRUE(f.conn->closed());
 }

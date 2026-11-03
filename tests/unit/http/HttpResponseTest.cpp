@@ -1,8 +1,10 @@
 #include "citius/http/HttpResponse.hpp"
 #include "citius/http/StatusCode.hpp"
 #include "citius/parse/HttpParser.hpp"
+#include <fcntl.h>
 #include <gtest/gtest.h>
 #include <string>
+#include <unistd.h>
 
 using citius::HttpResponse;
 using citius::ParseError;
@@ -143,4 +145,65 @@ TEST(HttpResponseTest, MakeErrorMontaCorpoEmTextoComTamanhoCerto) {
                                     "Content-Length: 14\r\n"
                                     "\r\n"
                                     "404 Not Found\n");
+}
+
+// ---- corpo de arquivo --------------------------------------------------------------------------------------------
+
+namespace {
+
+citius::FileDescriptor abrir_dev_null() {
+    return citius::FileDescriptor{::open("/dev/null", O_RDONLY)};
+}
+
+} // namespace
+
+TEST(HttpResponseTest, CorpoDeArquivoSerializaSoACabecaComOTamanhoDoArquivo) {
+    HttpResponse response;
+    response.set_file_body(abrir_dev_null(), 123456, "application/octet-stream");
+
+    const std::string bytes = response.serialize();
+
+    ASSERT_TRUE(response.file_body().has_value());
+    EXPECT_EQ(response.file_body()->size, 123456u);
+    EXPECT_NE(bytes.find("Content-Length: 123456\r\n"), std::string::npos);
+    EXPECT_NE(bytes.find("Content-Type: application/octet-stream\r\n"), std::string::npos);
+    EXPECT_TRUE(bytes.ends_with("\r\n\r\n")); // nenhum byte de corpo: o arquivo sai depois
+}
+
+TEST(HttpResponseTest, SetBodyDepoisDeSetFileBodyTiraOArquivo) {
+    HttpResponse response;
+    response.set_file_body(abrir_dev_null(), 10, "text/plain");
+
+    response.set_body("oi");
+
+    EXPECT_FALSE(response.file_body().has_value());
+    EXPECT_TRUE(response.serialize().ends_with("Content-Length: 2\r\n\r\noi"));
+}
+
+TEST(HttpResponseTest, SetFileBodyDepoisDeSetBodyLimpaOCorpoEmMemoria) {
+    HttpResponse response;
+    response.set_body("corpo em memoria");
+
+    response.set_file_body(abrir_dev_null(), 5, "text/plain");
+
+    const std::string bytes = response.serialize();
+    EXPECT_EQ(bytes.find("corpo em memoria"), std::string::npos);
+    EXPECT_NE(bytes.find("Content-Length: 5\r\n"), std::string::npos);
+}
+
+TEST(HttpResponseTest, CopiaCompartilhaOArquivoEOOriginalContinuaDono) {
+    HttpResponse original;
+    original.set_file_body(abrir_dev_null(), 5, "text/plain");
+    const int fd = original.file_body()->file->get();
+
+    {
+        HttpResponse copia = original;
+        EXPECT_EQ(copia.file_body()->file->get(), fd); // o mesmo descritor
+    } // a copia some, o original continua dono
+
+    EXPECT_NE(::fcntl(fd, F_GETFD), -1);
+}
+
+TEST(HttpResponseTest, SemCorpoDeArquivoPorPadrao) {
+    EXPECT_FALSE(HttpResponse{}.file_body().has_value());
 }

@@ -14,6 +14,10 @@ namespace citius {
 ///         tiver %XX malformado ou resultar em byte nulo. Nao resolve "..": isso e do resolve_static_path().
 [[nodiscard]] std::optional<std::string> decode_target_path(std::string_view target);
 
+/// @return o caminho canonico de @p root (symlinks resolvidos, sem barra final), ou std::nullopt se nao der para
+/// resolve-lo.
+[[nodiscard]] std::optional<std::filesystem::path> canonical_static_root(const std::filesystem::path& root);
+
 /// Converte um caminho ja decodificado em um caminho de arquivo garantidamente dentro de @p root.
 /// "/" e qualquer caminho terminado em '/' apontam para o index.html daquele diretorio.
 ///
@@ -22,8 +26,8 @@ namespace citius {
 /// sao ignorados, entao "//etc/passwd" vira "<root>/etc/passwd" (nunca o /etc/passwd real).
 /// Nao exige que o arquivo exista: quem le o arquivo decide o 404.
 ///
-/// Ha uma janela entre esta checagem e a abertura do arquivo (alguem pode trocar um symlink
-/// nesse intervalo, TOCTOU); aceitavel aqui porque quem escreve em www/ ja e confiavel.
+/// Esta checagem e so o PRIMEIRO filtro: entre ela e a abertura do arquivo alguem pode trocar um symlink (TOCTOU). Por
+/// isso quem abre o arquivo (open_static_file) confere de novo, no descritor ja aberto.
 /// @return o caminho canonico (copia).
 [[nodiscard]] std::optional<std::filesystem::path> resolve_static_path(const std::filesystem::path& root,
                                                                        std::string_view decoded_path);

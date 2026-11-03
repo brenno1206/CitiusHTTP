@@ -51,6 +51,20 @@ std::optional<std::string> decode_target_path(std::string_view target) {
     return decoded;
 }
 
+std::optional<std::filesystem::path> canonical_static_root(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path canonical_root = fs::weakly_canonical(root, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    // "www/" canonicaliza com um componente final vazio, que quebraria a comparacao por componentes
+    if (!canonical_root.has_filename()) {
+        canonical_root = canonical_root.parent_path();
+    }
+    return canonical_root;
+}
+
 std::optional<std::filesystem::path> resolve_static_path(const std::filesystem::path& root,
                                                          std::string_view decoded_path) {
     namespace fs = std::filesystem;
@@ -80,26 +94,22 @@ std::optional<std::filesystem::path> resolve_static_path(const std::filesystem::
         relative /= "index.html";
     }
 
+    std::optional<fs::path> const canonical_root = canonical_static_root(root);
+    if (!canonical_root) {
+        return std::nullopt;
+    }
     // error_code: weakly_canonical lancaria em caso de erro do SO (nome longo demais, ELOOP...);
     // para entrada de cliente isso e rotina, entao viramos "recusado"
     std::error_code ec;
-    fs::path canonical_root = fs::weakly_canonical(root, ec);
-    if (ec) {
-        return std::nullopt;
-    }
-    // "www/" canonicaliza com um componente final vazio, que quebraria a comparacao abaixo
-    if (!canonical_root.has_filename()) {
-        canonical_root = canonical_root.parent_path();
-    }
     // resolve symlinks dos trechos que existem; e aqui que um link para fora da raiz e desmascarado
-    fs::path candidate = fs::weakly_canonical(canonical_root / relative, ec);
+    fs::path candidate = fs::weakly_canonical(*canonical_root / relative, ec);
     if (ec) {
         return std::nullopt;
     }
 
     // dentro da raiz = todos os componentes da raiz sao prefixo do candidato.
     // Comparar componentes (e nao texto) evita que "www2" passe por "www".
-    if (std::ranges::mismatch(canonical_root, candidate).in1 != canonical_root.end()) {
+    if (std::ranges::mismatch(*canonical_root, candidate).in1 != canonical_root->end()) {
         return std::nullopt;
     }
     return candidate;

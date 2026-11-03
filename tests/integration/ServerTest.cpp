@@ -14,6 +14,7 @@
 #include <string>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <thread>
 #include <unistd.h>
@@ -605,6 +606,61 @@ TEST(ServerConcorrenciaTest, PrazosDeCentenasDeConexoesVencemTodosNoTempo) {
     const auto inicio = std::chrono::steady_clock::now();
     for (int i = 0; i < kClientes; ++i) EXPECT_EQ(clientes[i].recv_some(buffer), 0) << "cliente " << i;
     EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(1000));
+}
+
+namespace {
+
+// Arquivo de teste com padrao previsivel dentro da raiz do servidor de teste (criado sob demanda, so por quem o usa).
+std::string criar_arquivo_grande(const std::string& nome, std::size_t tamanho) {
+    std::string dados(tamanho, '\0');
+    for (std::size_t i = 0; i < tamanho; ++i) dados[i] = static_cast<char>((i * 7) % 253);
+    std::ofstream{raiz_de_teste() / nome, std::ios::binary} << dados;
+    return dados;
+}
+
+} // namespace
+
+// Antes o arquivo era lido INTEIRO para a memoria (limite de 10 MB, 500 acima disso) dentro do loop de uma thread so.
+TEST(ServerTest, ArquivoGrandeChegaIntegroEmStreaming) {
+    const std::string dados =
+        criar_arquivo_grande("download.bin", 25 * 1024 * 1024 + 17); // 25 MB: acima do antigo limite
+    Server server{0, raiz_de_teste()};
+
+    std::string resposta = requisitar(server, "GET /download.bin HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+    ASSERT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta.substr(0, 200);
+    EXPECT_NE(resposta.find("Content-Length: " + std::to_string(dados.size()) + "\r\n"), std::string::npos);
+    const std::size_t corpo = resposta.find("\r\n\r\n") + 4;
+    ASSERT_EQ(resposta.size() - corpo, dados.size());
+    EXPECT_TRUE(resposta.compare(corpo, std::string::npos, dados) == 0) << "o conteudo recebido difere do arquivo";
+}
+
+// O ponto da mudanca: um download lento nao pode atrasar os outros clientes, porque o loop so envia o que o socket
+// aceita e volta a atender os demais (antes, ler o arquivo inteiro e enviar prendia o loop).
+TEST(ServerConcorrenciaTest, DownloadLentoNaoAtrasaOsOutrosClientes) {
+    (void)criar_arquivo_grande("lento.bin", 16 * 1024 * 1024);
+    ServidorEmExecucao exec;
+    Socket lento = conectar(exec.server.port());
+    ASSERT_TRUE(lento.send_all("GET /lento.bin HTTP/1.1\r\nHost: x\r\n\r\n"));
+    std::array<char, 4096> buffer;
+    ASSERT_GT(lento.recv_some(buffer), 0); // comecou a baixar; agora o cliente "para de ler" (o buffer do socket enche)
+    esperar(200);
+
+    const auto inicio = std::chrono::steady_clock::now();
+    const std::string rapida = requisitar_em(exec.server.port(), kGetIndex);
+
+    EXPECT_TRUE(comeca_com(rapida, "HTTP/1.1 200 OK\r\n")) << rapida;
+    EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(500));
+}
+
+TEST(ServerTest, FifoDentroDaRaizDa404SemTravarOServidor) {
+    ASSERT_EQ(::mkfifo((raiz_de_teste() / "pipe").c_str(), 0600), 0);
+    Server server{0, raiz_de_teste()};
+
+    // um open() comum num FIFO sem escritor trava para sempre: aqui tem de voltar na hora
+    std::string resposta = requisitar(server, "GET /pipe HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 404 Not Found\r\n")) << resposta;
 }
 
 TEST(ServerConcorrenciaTest, SlowlorisComUmByteDeVezEmQuandoRecebe408NoPrazoTotal) {

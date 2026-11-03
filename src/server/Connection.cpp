@@ -5,13 +5,17 @@
 #include "citius/net/Socket.hpp"
 #include "citius/parse/RequestAssembler.hpp"
 #include "citius/util/Logger.hpp"
+#include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <format>
 #include <optional>
-#include <sys/types.h> // IWYU pragma: keep (ssize_t)
+#include <sys/types.h> // IWYU pragma: keep (ssize_t, off_t)
+#include <unistd.h>    // pread()
 #include <utility>
 
 namespace citius {
@@ -19,8 +23,12 @@ namespace citius {
 namespace {
 
 // Acima disso o buffer de saida e devolvido ao SO depois de cada resposta: uma conexao keep-alive
-// parada nao deve segurar megabytes de uma resposta antiga
-constexpr std::size_t kKeepOutputCapacity = 64 * 1024;
+// parada nao deve segurar o buffer de um download grande (o pedaco de arquivo, abaixo, e maior que isto)
+constexpr std::size_t kKeepOutputCapacity = 16 * 1024;
+
+// Quanto de um arquivo e lido por vez para o buffer de saida: memoria constante por conexao, qualquer que seja o
+// arquivo
+constexpr std::size_t kFileChunk = 64 * 1024;
 
 constexpr std::size_t kReadChunk = 16 * 1024;
 
@@ -59,6 +67,7 @@ void Connection::close() noexcept {
     m_socket.reset();
     m_state = State::CLOSED;
     m_out = std::string{};
+    m_file.reset(); // fecha o arquivo de uma resposta interrompida
 }
 
 void Connection::on_readable(Clock::time_point now) {
@@ -145,26 +154,63 @@ HttpResponse Connection::respond_safely(const HttpRequest& request) {
 void Connection::begin_response(const HttpResponse& response, bool keep_alive, Clock::time_point now) {
     m_out = response.serialize();
     m_out_pos = 0;
+    m_file.reset();
+    m_file_offset = 0;
+    m_file_remaining = 0;
+    if (const auto& body = response.file_body()) {
+        m_file = body->file;
+        m_file_remaining = body->size;
+    }
     m_close_after_write = !keep_alive;
     m_state = State::WRITING;
-    m_deadline = now + m_options.write_timeout;
+    // prazo base + o tempo que o cliente levaria lendo na velocidade minima (ver kMinWriteBytesPerSecond)
+    const std::uint64_t total_bytes = m_out.size() + m_file_remaining;
+    m_deadline =
+        now + m_options.write_timeout + std::chrono::milliseconds(total_bytes * 1000 / kMinWriteBytesPerSecond);
     if (flush()) finish_write(now);
 }
 
-bool Connection::flush() {
-    while (m_out_pos < m_out.size()) {
-        const ssize_t sent = m_socket.send_some(std::string_view{m_out}.substr(m_out_pos));
-        if (sent < 0) {
-            if (errno == EINTR) continue;
-            if (!would_block()) {
-                log_debug("Falha ao enviar resposta.");
-                close();
-            }
-            return false;
-        }
-        if (sent == 0) return false; // nao deveria ocorrer com dados a enviar; o proximo aviso tenta de novo
-        m_out_pos += static_cast<std::size_t>(sent);
+bool Connection::refill_from_file() {
+    const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(kFileChunk, m_file_remaining));
+    m_out.resize(want);
+    m_out_pos = 0;
+    ssize_t n = 0;
+    do {
+        n = ::pread(m_file->get(), m_out.data(), want, static_cast<off_t>(m_file_offset));
+    } while (n < 0 && errno == EINTR);
+    if (n <= 0) {
+        // O Content-Length ja foi enviado: o arquivo encolheu (ou o disco falhou) e nao da para cumprir a promessa.
+        // Fechar e o unico jeito de o cliente saber que a resposta esta incompleta.
+        log_warn("(arquivo encolheu ou falhou durante o envio: conexao encerrada)");
+        close();
+        return false;
     }
+    m_out.resize(static_cast<std::size_t>(n));
+    m_file_offset += static_cast<std::uint64_t>(n);
+    m_file_remaining -= static_cast<std::uint64_t>(n);
+    return true;
+}
+
+bool Connection::flush() {
+    for (;;) {
+        while (m_out_pos < m_out.size()) {
+            const ssize_t sent = m_socket.send_some(std::string_view{m_out}.substr(m_out_pos));
+            if (sent < 0) {
+                if (errno == EINTR) continue;
+                if (!would_block()) {
+                    log_debug("Falha ao enviar resposta.");
+                    close();
+                }
+                return false;
+            }
+            if (sent == 0) return false; // nao deveria ocorrer com dados a enviar; o proximo aviso tenta de novo
+            m_out_pos += static_cast<std::size_t>(sent);
+        }
+        // o buffer esvaziou: se a resposta tem um arquivo por enviar, o proximo pedaco vem dele
+        if (m_file_remaining == 0) break;
+        if (!refill_from_file()) return false;
+    }
+    m_file.reset();
     if (m_out.capacity() > kKeepOutputCapacity) {
         m_out = std::string{};
     } else {

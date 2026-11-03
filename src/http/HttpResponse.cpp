@@ -2,7 +2,10 @@
 #include "citius/http/HttpSyntax.hpp"
 #include "citius/http/StatusCode.hpp"
 #include "citius/util/AsciiText.hpp"
+#include "citius/util/FileDescriptor.hpp"
 #include <algorithm>
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -33,8 +36,17 @@ bool HttpResponse::set_header(std::string_view name, std::string_view value) {
 
 void HttpResponse::set_body(std::string body, std::string_view content_type) {
     m_body = std::move(body);
+    m_file.reset();
     if (!content_type.empty()) {
         (void)set_header("Content-Type", content_type); // so falha com content_type invalido: o cabecalho fica de fora
+    }
+}
+
+void HttpResponse::set_file_body(FileDescriptor file, std::uint64_t size, std::string_view content_type) {
+    m_body.clear();
+    m_file = FileBody{std::make_shared<const FileDescriptor>(std::move(file)), size};
+    if (!content_type.empty()) {
+        (void)set_header("Content-Type", content_type);
     }
 }
 
@@ -52,9 +64,9 @@ std::string HttpResponse::serialize() const {
         raw += "\r\n";
     }
     raw += "Content-Length: ";
-    raw += std::to_string(m_body.size());
+    raw += std::to_string(m_file ? m_file->size : m_body.size());
     raw += "\r\n\r\n";
-    raw += m_body;
+    raw += m_body; // vazio quando o corpo e um arquivo: ele sai depois, em pedacos
     return raw;
 }
 
