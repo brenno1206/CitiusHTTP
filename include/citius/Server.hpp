@@ -1,5 +1,6 @@
 #pragma once
 
+#include "citius/Connection.hpp"
 #include "citius/Router.hpp"
 #include "citius/Socket.hpp"
 #include <atomic>
@@ -10,14 +11,7 @@
 
 namespace citius {
 
-/// Quanto tempo esperar por dados de um cliente antes de responder 408 (padrao).
-inline constexpr std::chrono::milliseconds kDefaultReadTimeout{10000};
-
-/// Quanto tempo uma conexao keep-alive pode ficar parada esperando a proxima requisicao (padrao).
-inline constexpr std::chrono::milliseconds kDefaultIdleTimeout{5000};
-
-/// Quantas requisicoes uma conexao atende antes de o servidor fecha-la (evita conexao eterna).
-inline constexpr std::size_t kMaxRequestsPerConnection = 100;
+// kDefaultReadTimeout, kDefaultIdleTimeout e kMaxRequestsPerConnection moraram aqui; agora estao em Connection.hpp.
 
 /// Quantos clientes aceitos podem esperar por uma thread livre em run() (padrao).
 inline constexpr std::size_t kDefaultMaxQueuedClients = 128;

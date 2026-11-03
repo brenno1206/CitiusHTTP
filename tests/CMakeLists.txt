@@ -26,6 +26,7 @@ add_executable(citius_tests
     unit/RequestReaderTest.cpp
     unit/PollerTest.cpp
     unit/RequestAssemblerTest.cpp
+    unit/ConnectionTest.cpp
     integration/ServerTest.cpp
 )
 set_target_properties(citius_tests PROPERTIES CXX_EXTENSIONS OFF)
