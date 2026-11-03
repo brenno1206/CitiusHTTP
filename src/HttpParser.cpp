@@ -1,4 +1,5 @@
 #include "citius/HttpParser.hpp"
+#include "citius/HttpSyntax.hpp"
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -10,42 +11,15 @@ namespace {
 
 constexpr std::string_view kCrlf = "\r\n";
 
-// tchar da RFC 9110, secao 5.6.2: letras, digitos e estes simbolos
-bool is_tchar(char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) ||
-           std::string_view("!#$%&'*+-.^_`|~").find(c) != std::string_view::npos;
-}
-
-bool is_token(std::string_view text) {
-    return !text.empty() && std::ranges::all_of(text, is_tchar);
-}
-
 // SP e HTAB: o "espaco opcional" (OWS) que a RFC permite ao redor do valor
 bool is_ows(char c) {
     return c == ' ' || c == '\t';
-}
-
-// Controles (NUL, CR e LF soltos, etc.) nao podem aparecer; so HTAB e permitido
-bool has_control_chars(std::string_view text) {
-    return std::ranges::any_of(text, [](char c) {
-        auto u = static_cast<unsigned char>(c);
-        return (u < 0x20 && c != '\t') || u == 0x7f;
-    });
 }
 
 std::string_view trim_ows(std::string_view text) {
     while (!text.empty() && is_ows(text.front())) text.remove_prefix(1);
     while (!text.empty() && is_ows(text.back())) text.remove_suffix(1);
     return text;
-}
-
-// tolower da <cctype> depende do locale; aqui so interessa ASCII
-std::string to_lower_ascii(std::string_view text) {
-    std::string lower(text);
-    std::ranges::transform(lower, lower.begin(), [](char c) {
-        return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-    });
-    return lower;
 }
 
 // Os parse_* devolvem o erro, ou std::nullopt quando deu certo.
@@ -134,6 +108,17 @@ std::optional<ParseError> parse_header_line(std::string_view line, HttpRequest::
 }
 
 } // namespace
+
+StatusCode to_status(ParseError error) noexcept {
+    switch (error) {
+        case ParseError::BAD_REQUEST: return StatusCode::BAD_REQUEST;
+        case ParseError::NOT_IMPLEMENTED: return StatusCode::NOT_IMPLEMENTED;
+        case ParseError::URI_TOO_LONG: return StatusCode::URI_TOO_LONG;
+        case ParseError::VERSION_NOT_SUPPORTED: return StatusCode::VERSION_NOT_SUPPORTED;
+        case ParseError::HEADERS_TOO_LARGE: return StatusCode::HEADERS_TOO_LARGE;
+    }
+    return StatusCode::BAD_REQUEST;  // valor fora do enum: tratar como requisicao invalida
+}
 
 ParseResult HttpParser::parse(std::string_view raw_head) {
     std::size_t line_end = raw_head.find(kCrlf);

@@ -1,5 +1,6 @@
 #pragma once
 #include "HttpRequest.hpp"
+#include "StatusCode.hpp"
 #include <cstddef>
 #include <optional>
 #include <string_view>
@@ -16,6 +17,9 @@ enum class ParseError {
     VERSION_NOT_SUPPORTED, ///< 505: versao bem formada, mas diferente de HTTP/1.0 e HTTP/1.1
     HEADERS_TOO_LARGE      ///< 431: mais de HttpParser::kMaxHeaderCount cabecalhos
 };
+
+/// @return o status HTTP que corresponde a @p error (ver a tabela em ParseError).
+[[nodiscard]] StatusCode to_status(ParseError error) noexcept;
 
 /// Resultado de HttpParser::parse: ou ha uma requisicao, ou ha o motivo do erro.
 struct ParseResult {
