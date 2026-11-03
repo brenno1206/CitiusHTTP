@@ -5,6 +5,7 @@
 #include "citius/StaticFiles.hpp"
 #include <arpa/inet.h>  // ntohs()
 #include <cerrno>
+#include <exception>
 #include <format>
 #include <iostream>
 #include <netinet/in.h> // Para struct sockaddr_in, htons(), htonl()
@@ -21,19 +22,20 @@ namespace {
 // Teto para linha de requisicao + cabecalhos; acima disso respondemos 431. 8 KB e um limite comum (ex.: nginx)
 constexpr std::size_t kMaxRequestHeadBytes = 8192;
 
-std::string_view method_name(HttpMethod method) {
-    switch (method) {
-        case HttpMethod::GET: return "GET";
-        case HttpMethod::POST: return "POST";
-        case HttpMethod::PUT: return "PUT";
-        case HttpMethod::DELETE: return "DELETE";
-        case HttpMethod::UNKNOWN: break;
+// Um handler com bug nao pode derrubar o servidor nem deixar o cliente sem resposta.
+HttpResponse route_safely(const Router& router, const HttpRequest& request) {
+    try {
+        return router.route(request);
+    } catch (const std::exception& e) {
+        std::cerr << std::format("Handler lancou excecao: {}\n", e.what());
+    } catch (...) {
+        std::cerr << "Handler lancou excecao desconhecida.\n";
     }
-    return "?";
+    return HttpResponse::make_error(StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 // Decide a resposta para o que foi lido do cliente; std::nullopt = nao ha a quem responder.
-std::optional<HttpResponse> build_response(const ReadResult& head, const std::filesystem::path& root) {
+std::optional<HttpResponse> build_response(const ReadResult& head, const Router& router) {
     switch (head.status) {
         case ReadStatus::TOO_LARGE:
             std::cout << "(cabecalhos grandes demais) -> 431\n";
@@ -53,8 +55,7 @@ std::optional<HttpResponse> build_response(const ReadResult& head, const std::fi
         return HttpResponse::make_error(status);
     }
 
-    // TODO(Fase 3): o Router decide entre handlers registrados e arquivos estaticos
-    HttpResponse response = serve_static(root, *parsed.request);
+    HttpResponse response = route_safely(router, *parsed.request);
     // fechamos a conexao apos cada resposta; a RFC pede que o servidor avise
     (void)response.set_header("Connection", "close");
 
@@ -66,6 +67,8 @@ std::optional<HttpResponse> build_response(const ReadResult& head, const std::fi
 } // namespace
 
 Server::Server(std::uint16_t port, std::filesystem::path root) : m_root(std::move(root)) {
+    // captura a raiz por valor: o fallback nao pode depender do endereco do Server (que e movivel)
+    m_router.set_fallback([root = m_root](const HttpRequest& request) { return serve_static(root, request); });
     start(port);
 }
 
@@ -125,7 +128,7 @@ void Server::serve_one() {
         return;
     }
 
-    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes), m_root);
+    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes), m_router);
     if(response && !client.send_all(response->serialize())) {
         std::cerr << "Falha ao enviar resposta.\n";
     }

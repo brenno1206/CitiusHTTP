@@ -7,6 +7,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <stdexcept>
 #include <string>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -239,4 +240,64 @@ TEST(ServerTest, PostEmArquivoEstaticoDa405) {
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 405 Method Not Allowed\r\n"));
     EXPECT_NE(resposta.find("Allow: GET\r\n"), std::string::npos);
+}
+
+TEST(ServerTest, RotaRegistradaResponde200) {
+    Server server{0, raiz_de_teste()};
+    server.router().get("/ping", [](const citius::HttpRequest&) {
+        citius::HttpResponse response;
+        response.set_body("pong");
+        return response;
+    });
+
+    std::string resposta = requisitar(server, "GET /ping HTTP/1.1\r\nHost: x\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n"));
+    EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos);
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\npong"));
+}
+
+TEST(ServerTest, MetodoErradoNaRotaRegistradaDa405ComAllow) {
+    Server server{0, raiz_de_teste()};
+    server.router().get("/ping", [](const citius::HttpRequest&) { return citius::HttpResponse{}; });
+
+    std::string resposta = requisitar(server, "POST /ping HTTP/1.1\r\nHost: x\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    EXPECT_NE(resposta.find("Allow: GET\r\n"), std::string::npos);
+}
+
+TEST(ServerTest, ArquivoEstaticoContinuaFuncionandoComRotasRegistradas) {
+    Server server{0, raiz_de_teste()};
+    server.router().get("/ping", [](const citius::HttpRequest&) { return citius::HttpResponse{}; });
+
+    std::string resposta = requisitar(server, "GET /index.html HTTP/1.1\r\nHost: x\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n"));
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nHello Citius!"));
+}
+
+TEST(ServerTest, RotaTemPrioridadeSobreArquivoEstatico) {
+    Server server{0, raiz_de_teste()};
+    server.router().get("/index.html", [](const citius::HttpRequest&) {
+        citius::HttpResponse response;
+        response.set_body("da rota");
+        return response;
+    });
+
+    EXPECT_TRUE(requisitar(server, "GET /index.html HTTP/1.1\r\nHost: x\r\n\r\n").ends_with("\r\n\r\nda rota"));
+}
+
+TEST(ServerTest, HandlerQueLancaExcecaoDa500EOServidorContinua) {
+    Server server{0, raiz_de_teste()};
+    server.router().get("/falha", [](const citius::HttpRequest&) -> citius::HttpResponse {
+        throw std::runtime_error("bug no handler");
+    });
+
+    std::string resposta = requisitar(server, "GET /falha HTTP/1.1\r\nHost: x\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 500 Internal Server Error\r\n"));
+    EXPECT_EQ(resposta.find("bug no handler"), std::string::npos); // nao vaza detalhe interno ao cliente
+    // o proximo cliente e atendido normalmente
+    EXPECT_TRUE(comeca_com(requisitar(server, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"), "HTTP/1.1 200 OK\r\n"));
 }
