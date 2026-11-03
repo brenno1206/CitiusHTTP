@@ -1,5 +1,6 @@
 #include "citius/Socket.hpp"
 #include <cerrno>
+#include <fcntl.h>      // fcntl(), O_NONBLOCK
 #include <sys/socket.h> // setsockopt(), send(), recv()
 #include <sys/time.h>   // struct timeval
 #include <unistd.h>     // close()
@@ -57,14 +58,14 @@ bool Socket::set_recv_timeout(std::chrono::milliseconds timeout) noexcept {
     return ::setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
 }
 
+bool Socket::set_nonblocking() noexcept {
+    const int flags = ::fcntl(m_fd, F_GETFL, 0);
+    return flags >= 0 && ::fcntl(m_fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
 bool Socket::send_all(std::string_view data) noexcept {
-#ifdef MSG_NOSIGNAL
-    constexpr int kFlags = MSG_NOSIGNAL;
-#else
-    constexpr int kFlags = 0; // macOS: SO_NOSIGPIPE (set_no_sigpipe) faz esse papel
-#endif
     while (!data.empty()) {
-        ssize_t sent = ::send(m_fd, data.data(), data.size(), kFlags);
+        ssize_t sent = send_some(data);
         if (sent < 0) {
             if (errno == EINTR) {
                 continue;
@@ -74,6 +75,16 @@ bool Socket::send_all(std::string_view data) noexcept {
         data.remove_prefix(static_cast<std::size_t>(sent));
     }
     return true;
+}
+
+ssize_t Socket::send_some(std::string_view data) noexcept {
+#ifdef MSG_NOSIGNAL
+    constexpr int kFlags = MSG_NOSIGNAL;
+#else
+    constexpr int kFlags = 0; // macOS: SO_NOSIGPIPE (set_no_sigpipe) faz esse papel
+#endif
+    // sem laco de EINTR aqui: send_all trata o EINTR e quem usa send_some direto decide o que fazer
+    return ::send(m_fd, data.data(), data.size(), kFlags);
 }
 
 ssize_t Socket::recv_some(std::span<char> buffer) noexcept {

@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <stdexcept>
 #include <string>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <thread>
@@ -106,11 +107,11 @@ void esperar(int milissegundos) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milissegundos));
 }
 
-// Servidor com run() numa thread. O destrutor pede a parada e espera: como o pool espera os clientes
+// Servidor com run() numa thread. O destrutor pede a parada e espera: como run() espera os clientes
 // em andamento, os clientes do teste precisam ser fechados ANTES (declare-os depois deste objeto).
 struct ServidorEmExecucao {
-    explicit ServidorEmExecucao(std::size_t threads = 2, std::size_t fila = 128)
-        : server{0, raiz_de_teste(), threads, fila}, thread{[this] { server.run(); }} {}
+    explicit ServidorEmExecucao(std::size_t max_conexoes = citius::kDefaultMaxConnections)
+        : server{0, raiz_de_teste(), max_conexoes}, thread{[this] { server.run(); }} {}
 
     ~ServidorEmExecucao() {
         server.request_stop();
@@ -342,7 +343,7 @@ TEST(ServerTest, HandlerQueLancaExcecaoDa500EOServidorContinua) {
 }
 
 TEST(ServerConcorrenciaTest, ClienteMudoNaoBloqueiaOsOutros) {
-    ServidorEmExecucao em_execucao{2};
+    ServidorEmExecucao em_execucao;
     Socket mudo = conectar(em_execucao.server.port()); // conecta e nao envia nada
     esperar(100);
 
@@ -352,7 +353,7 @@ TEST(ServerConcorrenciaTest, ClienteMudoNaoBloqueiaOsOutros) {
 }
 
 TEST(ServerConcorrenciaTest, MuitosClientesAoMesmoTempo) {
-    ServidorEmExecucao em_execucao{4};
+    ServidorEmExecucao em_execucao;
     constexpr int kClientes = 32;
     std::vector<std::string> respostas(kClientes);
 
@@ -370,9 +371,9 @@ TEST(ServerConcorrenciaTest, MuitosClientesAoMesmoTempo) {
     }
 }
 
-TEST(ServerConcorrenciaTest, FilaCheiaResponde503EDepoisSeRecupera) {
-    // 1 thread e fila de 1: o primeiro mudo ocupa a thread, o segundo ocupa a fila, o terceiro leva 503
-    ServidorEmExecucao em_execucao{1, 1};
+TEST(ServerConcorrenciaTest, LimiteDeConexoesResponde503EDepoisSeRecupera) {
+    // limite de 2 conexoes: os dois mudos ocupam as duas vagas e o terceiro leva 503
+    ServidorEmExecucao em_execucao{2};
     std::string rejeitada;
     {
         Socket mudo1 = conectar(em_execucao.server.port());
@@ -381,13 +382,14 @@ TEST(ServerConcorrenciaTest, FilaCheiaResponde503EDepoisSeRecupera) {
         esperar(150);
 
         rejeitada = requisitar_em(em_execucao.server.port(), kGetIndex);
-    } // fecha os mudos: o pool desocupa
+    } // fecha os mudos: as vagas voltam
 
     EXPECT_TRUE(comeca_com(rejeitada, "HTTP/1.1 503 Service Unavailable\r\n"));
     EXPECT_NE(rejeitada.find("Retry-After: 1\r\n"), std::string::npos);
     EXPECT_NE(rejeitada.find("Connection: close\r\n"), std::string::npos);
 
-    // depois que os mudos saem, o servidor volta a atender
+    // depois que os mudos saem, o servidor volta a atender (da um instante para ele notar que fecharam)
+    esperar(150);
     EXPECT_TRUE(comeca_com(requisitar_em(em_execucao.server.port(), kGetIndex), "HTTP/1.1 200 OK\r\n"));
 }
 
@@ -430,8 +432,65 @@ TEST(ServerConcorrenciaTest, AposAParadaNaoAceitaMaisConexoes) {
     SUCCEED();
 }
 
-TEST(ServerConcorrenciaTest, FilaZeroLancaExcecao) {
-    EXPECT_THROW((Server{0, raiz_de_teste(), 2, 0}), std::invalid_argument);
+TEST(ServerConcorrenciaTest, LimiteZeroDeConexoesLancaExcecao) {
+    EXPECT_THROW((Server{0, raiz_de_teste(), 0}), std::invalid_argument);
+}
+
+namespace {
+
+// Cada conexao do teste gasta dois descritores (o cliente e o lado do servidor, no mesmo processo),
+// e o limite padrao do macOS (256) nao comporta centenas delas.
+bool elevar_limite_de_fds(rlim_t minimo) {
+    rlimit limite{};
+    if (::getrlimit(RLIMIT_NOFILE, &limite) != 0) return false;
+    if (limite.rlim_cur >= minimo) return true;
+    limite.rlim_cur = std::min(minimo, limite.rlim_max);
+    return ::setrlimit(RLIMIT_NOFILE, &limite) == 0 && limite.rlim_cur >= minimo;
+}
+
+} // namespace
+
+// O ponto da Fase 7: com uma thread por conexao, 500 clientes parados prenderiam 500 threads.
+TEST(ServerConcorrenciaTest, QuinhentasConexoesAbertasAoMesmoTempoSaoTodasAtendidas) {
+    constexpr int kClientes = 500;
+    if (!elevar_limite_de_fds(2 * kClientes + 100)) GTEST_SKIP() << "nao foi possivel subir o limite de descritores";
+    ServidorEmExecucao exec;
+    std::vector<Socket> clientes; // depois do servidor: fecham antes dele
+    clientes.reserve(kClientes);
+
+    for (int i = 0; i < kClientes; ++i) clientes.push_back(conectar(exec.server.port()));
+    for (auto& cliente : clientes) ASSERT_TRUE(cliente.send_all(kGetIndex));
+
+    // todas continuam abertas (keep-alive) e todas recebem a resposta
+    std::array<char, 4096> buffer;
+    for (int i = 0; i < kClientes; ++i) {
+        ssize_t n = clientes[i].recv_some(buffer);
+        ASSERT_GT(n, 0) << "cliente " << i;
+        EXPECT_TRUE(comeca_com(std::string(buffer.data(), static_cast<std::size_t>(n)), "HTTP/1.1 200 OK\r\n")) << "cliente " << i;
+    }
+}
+
+TEST(ServerConcorrenciaTest, SlowlorisComUmByteDeVezEmQuandoRecebe408NoPrazoTotal) {
+    ServidorEmExecucao exec;
+    exec.server.set_read_timeout(std::chrono::milliseconds(300));
+    Socket cliente = conectar(exec.server.port());
+    ASSERT_TRUE(cliente.set_recv_timeout(std::chrono::milliseconds(100)));
+
+    // 1 byte a cada ~100 ms: cada leitura chega bem antes de 300 ms, entao um prazo "por leitura"
+    // nunca estouraria e a conexao ficaria presa. O prazo certo e o da requisicao inteira.
+    const std::string requisicao = "GET /index.html HTTP/1.1\r\nHost: x\r\nX-Lento: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const auto inicio = std::chrono::steady_clock::now();
+    std::string resposta;
+    std::array<char, 4096> buffer;
+    for (std::size_t i = 0; i < requisicao.size() && resposta.empty(); ++i) {
+        EXPECT_TRUE(cliente.send_all(requisicao.substr(i, 1)));
+        ssize_t n = cliente.recv_some(buffer); // espera ate 100 ms: serve de pausa e de leitura
+        if (n > 0) resposta.assign(buffer.data(), static_cast<std::size_t>(n));
+    }
+    const auto demorou = std::chrono::steady_clock::now() - inicio;
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
+    EXPECT_LT(demorou, std::chrono::milliseconds(1000));
 }
 
 TEST(ServerTest, ClienteMudoRecebe408ELiberaAThread) {
@@ -445,12 +504,13 @@ TEST(ServerTest, ClienteMudoRecebe408ELiberaAThread) {
     EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos);
 }
 
-TEST(ServerTest, ClienteMudoNaoPrendeOUnicoSlotDoPool) {
-    ServidorEmExecucao exec{1, 4};
+TEST(ServerTest, ClienteMudoLiberaAUnicaVagaDeConexaoDepoisDoTimeout) {
+    ServidorEmExecucao exec{1};
     exec.server.set_read_timeout(std::chrono::milliseconds(100));
     Socket mudo = conectar(exec.server.port());
 
-    // a unica thread esta com o cliente mudo; depois do timeout ela atende o proximo
+    // a unica vaga esta com o cliente mudo; depois do timeout (408) ela volta e o proximo e atendido
+    esperar(300);
     std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
@@ -701,15 +761,16 @@ TEST(ServerKeepAliveTest, ConexaoOciosaFechaEmSilencio) {
     EXPECT_TRUE(leitor.fechada());
 }
 
-TEST(ServerKeepAliveTest, OciosidadeLiberaAThreadParaOutroCliente) {
-    ServidorEmExecucao exec{1, 4};
+TEST(ServerKeepAliveTest, OciosidadeLiberaAUnicaVagaDeConexaoParaOutroCliente) {
+    ServidorEmExecucao exec{1};
     exec.server.set_idle_timeout(std::chrono::milliseconds(150));
     Socket ocioso = conectar(exec.server.port());
     LeitorDeRespostas leitor{ocioso};
     ASSERT_TRUE(ocioso.send_all(kGetIndex));
     ASSERT_FALSE(leitor.proxima().empty());
 
-    // a unica thread esta presa ao 'ocioso' ate o prazo de ociosidade
+    // a unica vaga esta com o 'ocioso' ate o prazo de ociosidade
+    esperar(400);
     std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;

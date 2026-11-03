@@ -15,9 +15,8 @@ namespace citius {
 struct Config {
     std::uint16_t port = 8080;                              ///< 0 = o SO escolhe uma porta livre
     std::filesystem::path root = "www";                     ///< pasta dos arquivos publicos
-    std::size_t threads = 0;                                ///< 0 = uma por nucleo (minimo 2)
-    std::size_t max_queued = kDefaultMaxQueuedClients;      ///< clientes esperando uma thread; acima, 503
-    std::chrono::milliseconds read_timeout = kDefaultReadTimeout; ///< por leitura; estourou, 408
+    std::size_t max_connections = kDefaultMaxConnections;   ///< conexoes abertas ao mesmo tempo; acima, 503
+    std::chrono::milliseconds read_timeout = kDefaultReadTimeout; ///< requisicao inteira; estourou, 408
     std::chrono::milliseconds idle_timeout = kDefaultIdleTimeout; ///< keep-alive parado; estourou, fecha
     LogLevel log_level = LogLevel::INFO;
 };
@@ -39,7 +38,7 @@ struct ConfigResult {
 /// Interpreta os argumentos do programa (sem o argv[0]). Formas aceitas: "--port 8080" e
 /// "--port=8080"; opcao repetida vale a ultima; "--help"/"-h" pede o texto de uso (a menos que um
 /// argumento anterior ja seja invalido). Numeros so com digitos e dentro de faixas razoaveis
-/// (porta 0-65535, threads ate 1024, fila 1-1000000, timeouts 1 ms-1 h). Nunca lanca excecao.
+/// (porta 0-65535, conexoes 1-1000000, timeouts 1 ms-1 h). Nunca lanca excecao.
 [[nodiscard]] ConfigResult parse_config(std::span<const std::string_view> args);
 
 /// @return o texto de ajuda: uso, opcoes e padroes. @p program e o nome do executavel.

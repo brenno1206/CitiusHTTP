@@ -20,8 +20,17 @@ add_library(citius_core STATIC
     src/Config.cpp
     src/Socket.cpp
     src/RequestReader.cpp
+    src/RequestAssembler.cpp
+    src/Connection.cpp
     src/Server.cpp
 )
+
+# Poller: kqueue no macOS, epoll no Linux (mesma interface em Poller.hpp)
+if(APPLE)
+    target_sources(citius_core PRIVATE src/PollerKqueue.cpp)
+else()
+    target_sources(citius_core PRIVATE src/PollerEpoll.cpp)
+endif()
 
 # Padrao C++20 puro (sem extensoes GNU). PUBLIC: quem linka a biblioteca herda o requisito
 target_compile_features(citius_core PUBLIC cxx_std_20)

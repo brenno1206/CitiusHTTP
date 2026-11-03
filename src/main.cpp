@@ -2,11 +2,16 @@
 #include "citius/Logger.hpp"
 #include "citius/Server.hpp"
 #include <atomic>
+#include <algorithm>
+#include <climits> // OPEN_MAX (macOS)
 #include <csignal>
+#include <cstddef>
 #include <exception>
+#include <format>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <sys/resource.h> // getrlimit(), setrlimit()
 #include <vector>
 
 namespace {
@@ -34,6 +39,28 @@ void install_stop_handlers() {
     sigaction(SIGTERM, &action, nullptr);
 }
 
+// Cada conexao usa um descritor de arquivo, e o limite padrao do processo e baixo (256 no macOS):
+// sem subi-lo ate o maximo permitido, algumas centenas de clientes ja dariam "Too many open files".
+void raise_fd_limit(std::size_t max_connections) {
+    rlimit limit{};
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0) return;
+
+    rlim_t wanted = limit.rlim_max;
+#ifdef OPEN_MAX
+    wanted = std::min<rlim_t>(wanted, OPEN_MAX); // macOS recusa mais que OPEN_MAX mesmo com rlim_max "ilimitado"
+#endif
+    if (wanted > limit.rlim_cur) {
+        limit.rlim_cur = wanted;
+        if (setrlimit(RLIMIT_NOFILE, &limit) != 0) getrlimit(RLIMIT_NOFILE, &limit);
+    }
+    // alem das conexoes ha o socket de escuta, o kqueue/epoll, stdin/out/err e arquivos servidos
+    constexpr rlim_t kReserved = 16;
+    if (limit.rlim_cur < max_connections + kReserved) {
+        citius::log_warn(std::format("--max-connections {} nao cabe no limite de descritores ({}); acima dele os clientes falham com EMFILE.",
+                                     max_connections, static_cast<unsigned long long>(limit.rlim_cur)));
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -57,7 +84,8 @@ int main(int argc, char** argv) {
 
     // falhas de inicializacao (ex.: porta ocupada) viram mensagem clara e codigo de saida 1
     try {
-        citius::Server server{config.port, config.root, config.threads, config.max_queued};
+        raise_fd_limit(config.max_connections);
+        citius::Server server{config.port, config.root, config.max_connections};
         server.set_read_timeout(config.read_timeout);
         server.set_idle_timeout(config.idle_timeout);
         server.router().get("/ping", [](const citius::HttpRequest&) {

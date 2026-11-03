@@ -2,7 +2,7 @@
 
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção (Fases 0 a 6 concluídas). O servidor aceita conexões e as atende em paralelo com um thread pool (fila cheia responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fases 0 a 7 concluídas). O servidor atende todos os clientes numa thread só, com um event loop (`kqueue`/`epoll`; acima de `--max-connections` responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -94,12 +94,12 @@ O código é dividido em **camadas**. Cada camada só conhece a de baixo, nunca 
 ┌─────────────────────────────────────────────┐
 │  main.cpp        (monta e liga as peças)    │
 ├─────────────────────────────────────────────┤
-│  core/   Server, ThreadPool, Config         │  orquestração
+│  core/   Server, Connection, Config         │  orquestração
 ├─────────────────────────────────────────────┤
 │  http/   Request, Response, Parser,         │  regras do protocolo
 │          Router, StatusCode, Mime           │  (sem nenhuma chamada de rede)
 ├─────────────────────────────────────────────┤
-│  net/    Socket (RAII), Listener, Connection│  sistema operacional / POSIX
+│  net/    Socket (RAII), Poller, Listener    │  sistema operacional / POSIX
 ├─────────────────────────────────────────────┤
 │  util/   Logger                             │  transversal
 └─────────────────────────────────────────────┘
@@ -115,10 +115,10 @@ CitiusHTTP/
 ├── .clang-format             estilo de código automático
 ├── .clang-tidy               análise estática
 ├── include/citius/           headers públicos
-│   ├── net/                  Socket.hpp, Listener.hpp, Connection.hpp
+│   ├── net/                  Socket.hpp, Poller.hpp, Listener.hpp
 │   ├── http/                 HttpRequest.hpp, HttpResponse.hpp, HttpParser.hpp,
 │   │                         Router.hpp, StatusCode.hpp, Mime.hpp
-│   ├── core/                 Server.hpp, ThreadPool.hpp, Config.hpp
+│   ├── core/                 Server.hpp, Connection.hpp, ThreadPool.hpp, Config.hpp
 │   └── util/                 Logger.hpp
 ├── src/                      implementações (.cpp) espelhando include/
 │   └── main.cpp
@@ -172,8 +172,8 @@ Esta é a lista do que o projeto vai usar, o que significa e por quê.
 Evolução planejada, de simples a avançado:
 
 1. ~~**Sequencial**: um cliente por vez.~~ (`serve_one()` ainda existe, usado nos testes)
-2. **Thread pool** com fila de tarefas (`std::jthread`, `std::mutex`, `std::condition_variable`) ✅ (hoje). Fila cheia responde `503`; `SIGINT`/`SIGTERM` param de aceitar e terminam os clientes em andamento. Com keep-alive, cada conexão aberta ocupa uma thread até fechar: é o limite que o event loop resolve.
-3. **Event loop** com `kqueue` (macOS) / `epoll` (Linux) atrás de uma interface comum, para milhares de conexões com poucas threads.
+2. ~~**Thread pool** com fila de tarefas (`std::jthread`, `std::mutex`, `std::condition_variable`)~~ (Fase 4; o `ThreadPool` continua na biblioteca, mas o `Server` não o usa mais: com keep-alive, cada conexão aberta prendia uma thread até fechar).
+3. **Event loop** com `kqueue` (macOS) / `epoll` (Linux) atrás de uma interface comum (`Poller`) ✅ (hoje). Uma thread atende milhares de conexões; com 3000 clientes simultâneos o thread pool respondia 503 a praticamente todos e o loop atende todos (ver [docs/benchmarks.md](docs/benchmarks.md)). O custo: um handler lento, como ler um arquivo grande, atrasa todos; o próximo passo possível é entregar esses handlers a um pool.
 
 ### 4.4 Engenharia e processo
 
@@ -221,16 +221,15 @@ Ou abra `http://localhost:8080` no navegador. Inicie o servidor **na raiz do pro
 Opções de linha de comando (`./build/citius_server --help` mostra a lista completa):
 
 ```bash
-./build/citius_server --port 9090 --root site --threads 4 --log-level debug
+./build/citius_server --port 9090 --root site --max-connections 1000 --log-level debug
 ```
 
 | Opção | O que faz | Padrão |
 |---|---|---|
 | `--port N` | porta TCP (0 = o SO escolhe) | 8080 |
 | `--root PASTA` | pasta dos arquivos públicos | `www` |
-| `--threads N` | threads do pool (0 = uma por núcleo) | 0 |
-| `--max-queued N` | clientes esperando uma thread; acima disso, 503 | 128 |
-| `--read-timeout-ms N` | espera máxima por dados do cliente; estourou, 408 | 10000 |
+| `--max-connections N` | conexões abertas ao mesmo tempo; acima disso, 503 | 4096 |
+| `--read-timeout-ms N` | prazo para a requisição chegar inteira (não é por leitura); estourou, 408 | 10000 |
 | `--idle-timeout-ms N` | espera da próxima requisição numa conexão keep-alive | 5000 |
 | `--log-level NIVEL` | `debug`, `info`, `warn` ou `error` | `info` |
 
@@ -273,7 +272,7 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 | **4. Concorrência** ✅ | Thread pool; tratamento de múltiplos clientes; encerramento gracioso | Threads, mutex, condition variable, sinais |
 | **5. HTTP robusto** ✅ | Keep-alive, timeouts, limites de tamanho, corpo da requisição (POST) com `Content-Length`, códigos de erro corretos | RFC 9112, defesa contra abuso |
 | **6. Observabilidade e configuração** ✅ | Logger com níveis, configuração por linha de comando/arquivo | Design de módulos transversais |
-| **7. Alta performance** | Event loop com `kqueue`/`epoll`, benchmarks, perfil | I/O assíncrono, medição |
+| **7. Alta performance** ✅ | Event loop com `kqueue`/`epoll`, benchmarks, perfil | I/O assíncrono, medição |
 | **8. Acabamento profissional** | CI no GitHub Actions, sanitizers, clang-tidy, ADRs, README com resultados de benchmark | Engenharia de software |
 
 ---

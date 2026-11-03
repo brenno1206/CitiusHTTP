@@ -32,8 +32,7 @@ TEST(ConfigTest, SemArgumentosUsaOsPadroes) {
     ASSERT_EQ(r.status, ParseStatus::OK);
     EXPECT_EQ(r.config.port, 8080);
     EXPECT_EQ(r.config.root, "www");
-    EXPECT_EQ(r.config.threads, 0u);
-    EXPECT_EQ(r.config.max_queued, citius::kDefaultMaxQueuedClients);
+    EXPECT_EQ(r.config.max_connections, citius::kDefaultMaxConnections);
     EXPECT_EQ(r.config.read_timeout, citius::kDefaultReadTimeout);
     EXPECT_EQ(r.config.idle_timeout, citius::kDefaultIdleTimeout);
     EXPECT_EQ(r.config.log_level, LogLevel::INFO);
@@ -41,14 +40,13 @@ TEST(ConfigTest, SemArgumentosUsaOsPadroes) {
 }
 
 TEST(ConfigTest, LeTodasAsOpcoesComValorSeparado) {
-    ConfigResult r = parse({"--port", "9090", "--root", "/tmp/site", "--threads", "4", "--max-queued", "16",
+    ConfigResult r = parse({"--port", "9090", "--root", "/tmp/site", "--max-connections", "16",
                             "--read-timeout-ms", "2000", "--idle-timeout-ms", "300", "--log-level", "debug"});
 
     ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
     EXPECT_EQ(r.config.port, 9090);
     EXPECT_EQ(r.config.root, "/tmp/site");
-    EXPECT_EQ(r.config.threads, 4u);
-    EXPECT_EQ(r.config.max_queued, 16u);
+    EXPECT_EQ(r.config.max_connections, 16u);
     EXPECT_EQ(r.config.read_timeout, std::chrono::milliseconds(2000));
     EXPECT_EQ(r.config.idle_timeout, std::chrono::milliseconds(300));
     EXPECT_EQ(r.config.log_level, LogLevel::DEBUG);
@@ -84,12 +82,13 @@ TEST(ConfigTest, NumerosInvalidosSaoRecusados) {
     }
 }
 
-TEST(ConfigTest, LimitesDeThreadsFilaETimeouts) {
-    EXPECT_EQ(parse({"--threads", "0"}).status, ParseStatus::OK);  // 0 = um por nucleo
-    espera_erro({"--threads", "1025"}, "--threads");
-    EXPECT_EQ(parse({"--max-queued", "1"}).status, ParseStatus::OK);
-    espera_erro({"--max-queued", "0"}, "--max-queued");
-    espera_erro({"--max-queued", "1000001"}, "--max-queued");
+TEST(ConfigTest, LimitesDeConexoesETimeouts) {
+    EXPECT_EQ(parse({"--max-connections", "1"}).status, ParseStatus::OK);
+    espera_erro({"--max-connections", "0"}, "--max-connections");
+    espera_erro({"--max-connections", "1000001"}, "--max-connections");
+    // as opcoes do thread pool deixaram de existir com o event loop
+    espera_erro({"--threads", "4"}, "--threads");
+    espera_erro({"--max-queued", "16"}, "--max-queued");
     espera_erro({"--read-timeout-ms", "0"}, "--read-timeout-ms");
     espera_erro({"--read-timeout-ms", "3600001"}, "--read-timeout-ms");
     espera_erro({"--idle-timeout-ms", "0"}, "--idle-timeout-ms");
@@ -141,7 +140,7 @@ TEST(ConfigTest, HelpComValorNaoExiste) {
 TEST(ConfigTest, TextoDeUsoCitaTodasAsOpcoes) {
     std::string uso = citius::config_usage("citius_server");
 
-    for (const char* opcao : {"citius_server", "--port", "--root", "--threads", "--max-queued", "--read-timeout-ms",
+    for (const char* opcao : {"citius_server", "--port", "--root", "--max-connections", "--read-timeout-ms",
                               "--idle-timeout-ms", "--log-level", "--help"}) {
         EXPECT_NE(uso.find(opcao), std::string::npos) << opcao;
     }

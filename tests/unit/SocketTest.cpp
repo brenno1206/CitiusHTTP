@@ -217,3 +217,80 @@ TEST(SocketTest, SetRecvTimeoutFalhaEmSocketInvalido) {
 
     EXPECT_FALSE(socket.set_recv_timeout(std::chrono::milliseconds(50)));
 }
+
+TEST(SocketTest, SetNonblockingFazRecvSomeRetornarEagainSemEsperar) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};  // aberto e mudo: um recv bloqueante ficaria parado
+    Socket receptor{fds[1]};
+    ASSERT_TRUE(receptor.set_nonblocking());
+
+    std::array<char, 16> buffer;
+    auto inicio = std::chrono::steady_clock::now();
+    EXPECT_EQ(receptor.recv_some(buffer), -1);
+    EXPECT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
+    EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(40));
+}
+
+TEST(SocketTest, SetNonblockingFalhaEmSocketInvalido) {
+    Socket socket;
+
+    EXPECT_FALSE(socket.set_nonblocking());
+}
+
+TEST(SocketTest, SendSomeEnviaOsBytesEDevolveQuantosForam) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};
+    Socket receptor{fds[1]};
+    ASSERT_TRUE(emissor.set_no_sigpipe());
+
+    EXPECT_EQ(emissor.send_some("ola"), 3);
+
+    std::array<char, 16> buffer;
+    ASSERT_EQ(receptor.recv_some(buffer), 3);
+    EXPECT_EQ(std::string(buffer.data(), 3), "ola");
+}
+
+TEST(SocketTest, SendSomeNaoBloqueanteEnviaParteEDepoisDaEagain) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};
+    Socket receptor{fds[1]};
+    ASSERT_TRUE(emissor.set_no_sigpipe());
+    ASSERT_TRUE(emissor.set_nonblocking());
+
+    // ninguem le: o buffer do kernel enche e o send_some tem de parar sozinho, sem bloquear
+    const std::string bloco(64 * 1024, 'x');
+    std::size_t total = 0;
+    ssize_t n;
+    while ((n = emissor.send_some(bloco)) > 0) {
+        total += static_cast<std::size_t>(n);
+        ASSERT_LT(total, 64u * 1024 * 1024) << "o buffer nunca encheu?";
+    }
+    EXPECT_GT(total, 0u);
+    EXPECT_EQ(n, -1);
+    EXPECT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
+
+    // o receptor esvazia o buffer: volta a caber
+    std::array<char, 65536> buffer;
+    ASSERT_GT(receptor.recv_some(buffer), 0);
+    EXPECT_GT(emissor.send_some("x"), 0);
+}
+
+TEST(SocketTest, SendSomeFalhaSemMatarOProcessoQuandoOParFechou) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};
+    Socket receptor{fds[1]};
+    ASSERT_TRUE(emissor.set_no_sigpipe());
+    receptor.reset();
+
+    EXPECT_EQ(emissor.send_some("ola"), -1);
+}
+
+TEST(SocketTest, SendSomeDevolveErroEmSocketInvalido) {
+    Socket socket;
+
+    EXPECT_EQ(socket.send_some("x"), -1);
+}
