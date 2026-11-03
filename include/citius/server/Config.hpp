@@ -13,9 +13,10 @@ namespace citius {
 
 /// Tudo que o operador pode ajustar na linha de comando. Os valores iniciais sao os padroes.
 struct Config {
-    std::uint16_t port = 8080;                                    ///< 0 = o SO escolhe uma porta livre
-    std::filesystem::path root = "www";                           ///< pasta dos arquivos publicos
-    std::size_t max_connections = kDefaultMaxConnections;         ///< conexoes abertas ao mesmo tempo; acima, 503
+    std::uint16_t port = 8080;                            ///< 0 = o SO escolhe uma porta livre
+    std::filesystem::path root = "www";                   ///< pasta dos arquivos publicos
+    std::size_t max_requests = kMaxRequestsPerConnection; ///< requisicoes por conexao keep-alive antes de fecha-la
+    std::size_t max_connections = kDefaultMaxConnections; ///< conexoes abertas ao mesmo tempo; acima, 503
     std::chrono::milliseconds read_timeout = kDefaultReadTimeout; ///< requisicao inteira; estourou, 408
     std::chrono::milliseconds idle_timeout = kDefaultIdleTimeout; ///< keep-alive parado; estourou, fecha
     LogLevel log_level = LogLevel::INFO;

@@ -31,8 +31,12 @@ inline constexpr std::chrono::milliseconds kDefaultLingerTimeout{2000};
 /// Quantos bytes uma conexao em lingering descarta antes de desistir e fechar (um cliente que nao para de enviar).
 inline constexpr std::size_t kMaxLingerBytes = 1024 * 1024;
 
-/// Quantas requisicoes uma conexao atende antes de o servidor fecha-la (evita conexao eterna).
-inline constexpr std::size_t kMaxRequestsPerConnection = 100;
+/// Quantas requisicoes uma conexao atende antes de o servidor fecha-la (evita conexao eterna; padrao). Nao e so
+/// higiene: com milhares de clientes que comecam juntos, todos chegam ao limite quase ao mesmo tempo e reconectam numa
+/// rajada que estoura a fila de escuta do kernel (128 no macOS), e o cliente leva RST. Com limite 100 e 3000
+/// conexoes o wrk viu ~1.000-2.000 erros de leitura; com 1000, nenhum (docs/benchmarks.md). Configuravel por
+/// Server::set_max_requests_per_connection e --max-requests.
+inline constexpr std::size_t kMaxRequestsPerConnection = 1000;
 
 /// Ajustes de uma Connection.
 struct ConnectionOptions {

@@ -32,10 +32,11 @@ namespace {
 // um atomic e nao consegue acordar o Poller) e para varrer os prazos das conexoes
 constexpr std::chrono::milliseconds kLoopTick{50};
 
-// Quantos clientes aceitar por aviso do socket de escuta. Em rajadas isso poupa chamadas ao Poller;
-// o limite evita que uma enxurrada de conexoes novas segure o loop longe das que ja estao abertas
-// (o aviso e por nivel: se sobrar cliente na fila, o proximo wait() avisa de novo)
-constexpr int kAcceptBatch = 64;
+// Quantos clientes aceitar por aviso do socket de escuta. A fila de espera do kernel e curta (128 no macOS): numa
+// rajada de reconexoes, aceitar so 64 por volta do loop deixava a fila estourar e o cliente levava RST (medido com
+// o wrk, ver docs/benchmarks.md). O limite existe para uma enxurrada de conexoes novas nao segurar o loop longe das
+// que ja estao abertas (o aviso e por nivel: se sobrar cliente na fila, o proximo wait() avisa de novo).
+constexpr int kAcceptBatch = 1024;
 
 // Depois de um erro de accept (ex.: sem descritores, EMFILE) o servidor para de vigiar o socket de escuta por um tempo
 // que dobra a cada falha seguida, de kMinAcceptBackoff ate kMaxAcceptBackoff, e volta sozinho. Dormir no laco seria
@@ -97,6 +98,7 @@ struct TimeoutSettings {
     const std::atomic<std::chrono::milliseconds::rep>& read;
     const std::atomic<std::chrono::milliseconds::rep>& idle;
     const std::atomic<std::chrono::milliseconds::rep>& linger;
+    const std::atomic<std::size_t>& max_requests; // nao e prazo, mas e lido no mesmo momento: a cada cliente novo
 };
 
 // O event loop em si: um objeto por chamada a run()/serve_one(), com o estado que existe enquanto ele
@@ -237,6 +239,7 @@ private:
         options.read_timeout = std::chrono::milliseconds(m_timeouts.read.load());
         options.idle_timeout = std::chrono::milliseconds(m_timeouts.idle.load());
         options.linger_timeout = std::chrono::milliseconds(m_timeouts.linger.load());
+        options.max_requests = m_timeouts.max_requests.load();
         auto conn = std::make_unique<Connection>(std::move(client), m_handler, now, options);
         if (conn->closed()) return;
 
@@ -327,6 +330,12 @@ void Server::set_idle_timeout(std::chrono::milliseconds timeout) noexcept {
     }
 }
 
+void Server::set_max_requests_per_connection(std::size_t max_requests) noexcept {
+    if (max_requests > 0) {
+        m_max_requests.store(max_requests);
+    }
+}
+
 void Server::set_linger_timeout(std::chrono::milliseconds timeout) noexcept {
     if (timeout > std::chrono::milliseconds::zero()) {
         m_linger_timeout_ms.store(timeout.count());
@@ -346,7 +355,7 @@ void Server::event_loop(bool single_client) {
                    single_client,
                    m_max_connections,
                    [this](const HttpRequest& request) { return m_router.route(request); },
-                   TimeoutSettings{m_read_timeout_ms, m_idle_timeout_ms, m_linger_timeout_ms},
+                   TimeoutSettings{m_read_timeout_ms, m_idle_timeout_ms, m_linger_timeout_ms, m_max_requests},
                    m_stop};
     loop.run();
 }

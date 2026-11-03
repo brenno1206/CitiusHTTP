@@ -94,6 +94,7 @@ int run(int argc, char** argv) {
         citius::Server server{config.port, config.root, config.max_connections};
         server.set_read_timeout(config.read_timeout);
         server.set_idle_timeout(config.idle_timeout);
+        server.set_max_requests_per_connection(config.max_requests);
         server.router().get("/ping", [](const citius::HttpRequest&) {
             citius::HttpResponse response;
             response.set_body("pong\n");

@@ -66,3 +66,35 @@ read (0,05% das requisições; causa não investigada).
   faz I/O de rede e entrega handlers lentos ao `ThreadPool` (que continua na biblioteca).
 - Cliente e servidor disputam os mesmos núcleos (M3, 8 núcleos); `wrk` usa 4 threads. O valor
   absoluto importa menos que a comparação.
+
+## Erros de leitura com 3000 conexões: investigação e correção
+
+Depois da Fase 7, o `wrk` com 3000 conexões mostrava de ~1.000 a ~2.000 "Socket errors: read" (≈0,05–0,1% das
+requisições), sem nenhuma anomalia correspondente no log do servidor (só ~20 erros de leitura do lado dele). A causa
+não era óbvia, então foi investigada com experimentos controlados (mesma máquina, Release, `wrk -t4 -c3000`):
+
+| Experimento | Erros de leitura | Vazão |
+|---|---|---|
+| Servidor da Fase 7/8 (limite de 100 requisições/conexão, `accept` em lotes de 64) | 1.100–2.300 | ~240 mil req/s |
+| *Lingering close* (FIN + descarte antes de fechar) | 1.100–2.300 (igual) | igual |
+| Limite de requisições por conexão praticamente removido | **0** | ~266 mil req/s |
+| Limite de 100, `accept` em lotes de 4096 | 560–980 | ~245 mil req/s |
+| Limite de **1000**, `accept` em lotes de 1024 | **0** (3 rodadas) | ~263 mil req/s |
+
+**Causa:** com 3000 clientes que começam juntos, todos chegam à requisição nº 100 quase ao mesmo tempo, o servidor fecha
+as 3000 conexões e o `wrk` reconecta todas numa rajada. A fila de espera do `listen` no macOS tem 128 posições
+(`kern.ipc.somaxconn`); a rajada a estoura, e o cliente que o kernel considerou conectado leva RST. Aceitar mais clientes
+por volta do loop ajuda (a fila esvazia mais rápido), mas o que resolve é **reduzir a rajada**: o limite padrão de
+requisições por conexão passou de 100 para **1000** (o nginx moderno também usa 1000), e ele agora é configurável
+(`--max-requests`, `Server::set_max_requests_per_connection`).
+
+Comparação final, três rodadas alternadas de cada servidor (`/ping`, 6 s por rodada):
+
+| Conexões | Fase 8 (`main`) | Esta versão | Erros de leitura (`main` → esta) |
+|---|---|---|---|
+| 1000 | 288 / 276 / 280 mil req/s | 300 / 297 / 286 mil req/s | 0 → 0 |
+| 3000 | 247 / 246 / 250 mil req/s | 260 / 262 / 259 mil req/s | 1.143 / 1.118 / 1.607 → **0** |
+
+Observações: o *lingering close* continua valendo (evita o RST que apagaria um 400/408/431/503 de um cliente ainda
+enviando; há teste), mas **não** era a causa destes erros. A diferença entre rodadas isoladas chega a ±10%: compare
+sempre rodadas alternadas, nunca uma única medição.

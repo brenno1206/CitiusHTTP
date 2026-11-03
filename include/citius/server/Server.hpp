@@ -65,6 +65,11 @@ public:
     /// clientes aceitos depois da chamada; pode ser chamado de qualquer thread. Prazo <= 0 e ignorado.
     void set_linger_timeout(std::chrono::milliseconds timeout) noexcept;
 
+    /// Define quantas requisicoes uma conexao keep-alive atende antes de o servidor fecha-la (padrao
+    /// kMaxRequestsPerConnection; ver o motivo la). Vale para os clientes aceitos depois da chamada; pode ser chamado
+    /// de qualquer thread. Zero e ignorado.
+    void set_max_requests_per_connection(std::size_t max_requests) noexcept;
+
     /// Atende um unico cliente: espera a conexao, serve as requisicoes dela ate ela fechar (keep-alive
     /// incluido) e retorna. Falhas do cliente (conexao cortada, requisicao invalida) nao lancam: sao
     /// registradas. Retorna sem atender ninguem se request_stop() for chamado antes de um cliente chegar.
@@ -94,6 +99,7 @@ private:
     std::atomic<std::chrono::milliseconds::rep> m_read_timeout_ms{kDefaultReadTimeout.count()};
     std::atomic<std::chrono::milliseconds::rep> m_idle_timeout_ms{kDefaultIdleTimeout.count()};
     std::atomic<std::chrono::milliseconds::rep> m_linger_timeout_ms{kDefaultLingerTimeout.count()};
+    std::atomic<std::size_t> m_max_requests{kMaxRequestsPerConnection};
     std::atomic<bool> m_stop = false;
     Listener
         m_listener; ///< socket de escuta (nao bloqueante); declarado por ultimo: so abre a porta depois da validacao

@@ -18,8 +18,8 @@ namespace citius {
 namespace {
 
 // Opcoes que recebem valor. "--help" e tratada a parte (nao tem valor).
-constexpr std::array<std::string_view, 6> kOptions{
-    "--port", "--root", "--max-connections", "--read-timeout-ms", "--idle-timeout-ms", "--log-level"};
+constexpr std::array<std::string_view, 7> kOptions{
+    "--port", "--root", "--max-connections", "--max-requests", "--read-timeout-ms", "--idle-timeout-ms", "--log-level"};
 
 // Aceita so digitos: from_chars nao tolera espaco nem '+', e recusa '-' em tipo sem sinal.
 // Sem a checagem de 'ptr', "80x" passaria como 80.
@@ -57,6 +57,10 @@ std::optional<std::string> apply(Config& config, std::string_view name, std::str
         error = read_number(name, value, 1, 1'000'000, number);
         if (error) return error;
         config.max_connections = static_cast<std::size_t>(number);
+    } else if (name == "--max-requests") {
+        error = read_number(name, value, 1, 1'000'000, number);
+        if (error) return error;
+        config.max_requests = static_cast<std::size_t>(number);
     } else if (name == "--read-timeout-ms") {
         error = read_number(name, value, 1, 3'600'000, number);
         if (error) return error;
@@ -126,12 +130,13 @@ std::string config_usage(std::string_view program) {
         "  --port N              porta TCP, 0 a 65535; 0 = o SO escolhe (padrao {})\n"
         "  --root PASTA          pasta dos arquivos publicos (padrao {})\n"
         "  --max-connections N   conexoes abertas ao mesmo tempo, 1 a 1000000; acima disso, 503 (padrao {})\n"
+        "  --max-requests N      requisicoes por conexao keep-alive antes de fecha-la, 1 a 1000000 (padrao {})\n"
         "  --read-timeout-ms N   prazo para a requisicao chegar inteira; estourou, 408 (padrao {})\n"
         "  --idle-timeout-ms N   espera maxima da proxima requisicao numa conexao keep-alive (padrao {})\n"
         "  --log-level NIVEL     debug, info, warn ou error (padrao {})\n"
         "  -h, --help            mostra esta ajuda\n",
-        program, defaults.port, defaults.root.string(), defaults.max_connections, defaults.read_timeout.count(),
-        defaults.idle_timeout.count(), "info");
+        program, defaults.port, defaults.root.string(), defaults.max_connections, defaults.max_requests,
+        defaults.read_timeout.count(), defaults.idle_timeout.count(), "info");
 }
 
 } // namespace citius

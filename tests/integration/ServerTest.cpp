@@ -930,18 +930,33 @@ TEST(ServerKeepAliveTest, OciosidadeLiberaAUnicaVagaDeConexaoParaOutroCliente) {
 }
 
 TEST(ServerKeepAliveTest, ConexaoFechaNoLimiteDeRequisicoes) {
+    constexpr std::size_t kLimite = 7;
     ServidorEmExecucao exec;
+    exec.server.set_max_requests_per_connection(kLimite);
     Socket cliente = conectar(exec.server.port());
     LeitorDeRespostas leitor{cliente};
 
-    for (std::size_t i = 1; i <= citius::kMaxRequestsPerConnection; ++i) {
+    for (std::size_t i = 1; i <= kLimite; ++i) {
         ASSERT_TRUE(cliente.send_all(kGetIndex));
         std::string resposta = leitor.proxima();
-        bool ultima = i == citius::kMaxRequestsPerConnection;
+        bool ultima = i == kLimite;
         EXPECT_NE(resposta.find(ultima ? "Connection: close\r\n" : "Connection: keep-alive\r\n"), std::string::npos)
             << "requisicao " << i << ": " << resposta;
     }
     EXPECT_TRUE(leitor.fechada());
+}
+
+TEST(ServerKeepAliveTest, LimitePadraoDeRequisicoesVemDaConstante) {
+    // sem set_max_requests_per_connection vale kMaxRequestsPerConnection; basta ver que uma sequencia longa passa
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    for (int i = 1; i <= 150; ++i) {
+        ASSERT_TRUE(cliente.send_all(kGetIndex));
+        ASSERT_NE(leitor.proxima().find("Connection: keep-alive\r\n"), std::string::npos) << "requisicao " << i;
+    }
+    static_assert(citius::kMaxRequestsPerConnection > 150, "o padrao precisa estar acima do que este teste envia");
 }
 
 TEST(ServerKeepAliveTest, PedidoDeParadaFechaConexoesOciosas) {
