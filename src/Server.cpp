@@ -1,18 +1,67 @@
 #include "citius/Server.hpp"
+#include "citius/HttpParser.hpp"
+#include "citius/HttpResponse.hpp"
 #include "citius/RequestReader.hpp"
-#include <sys/socket.h> // Para socket(), bind(), listen()
-#include <netinet/in.h> // Para struct sockaddr_in, htons(), htonl()
-#include <stdexcept>    // Para lançar std::runtime_error
+#include <arpa/inet.h>  // ntohs()
+#include <cerrno>
 #include <format>
 #include <iostream>
+#include <netinet/in.h> // Para struct sockaddr_in, htons(), htonl()
+#include <optional>
+#include <stdexcept>    // Para lançar std::runtime_error
 #include <string>
+#include <sys/socket.h> // Para socket(), bind(), listen()
 
 namespace citius {
 
 namespace {
+
 // Teto para linha de requisicao + cabecalhos; acima disso respondemos 431. 8 KB e um limite comum (ex.: nginx)
 constexpr std::size_t kMaxRequestHeadBytes = 8192;
+
+std::string_view method_name(HttpMethod method) {
+    switch (method) {
+        case HttpMethod::GET: return "GET";
+        case HttpMethod::POST: return "POST";
+        case HttpMethod::PUT: return "PUT";
+        case HttpMethod::DELETE: return "DELETE";
+        case HttpMethod::UNKNOWN: break;
+    }
+    return "?";
 }
+
+// Decide a resposta para o que foi lido do cliente; std::nullopt = nao ha a quem responder.
+std::optional<HttpResponse> build_response(const ReadResult& head) {
+    switch (head.status) {
+        case ReadStatus::TOO_LARGE:
+            std::cout << "(cabecalhos grandes demais) -> 431\n";
+            return HttpResponse::make_error(StatusCode::HEADERS_TOO_LARGE);
+        case ReadStatus::CLOSED:
+        case ReadStatus::ERROR:
+            std::cout << "(conexao encerrada antes de completar a requisicao)\n";
+            return std::nullopt;
+        case ReadStatus::COMPLETE:
+            break;
+    }
+
+    ParseResult parsed = HttpParser::parse(head.data);
+    if (!parsed.ok()) {
+        StatusCode status = to_status(*parsed.error);
+        std::cout << std::format("(requisicao invalida) -> {}\n", static_cast<int>(status));
+        return HttpResponse::make_error(status);
+    }
+
+    // TODO(Fases 2 e 3): servir arquivos de www/ e rotear; por enquanto a resposta e fixa
+    HttpResponse response{StatusCode::OK};
+    response.set_body("Hello Citius!");
+    // fechamos a conexao apos cada resposta; a RFC pede que o servidor avise
+    (void)response.set_header("Connection", "close");
+
+    std::cout << std::format("{} {} -> 200\n", method_name(parsed.request->method), parsed.request->path);
+    return response;
+}
+
+} // namespace
 
 Server::Server(std::uint16_t port) {
     start(port);
@@ -44,50 +93,46 @@ void Server::start(std::uint16_t port) {
         throw std::runtime_error("Falha no listen.\n");
     }
 
-    std::cout << std::format("Servidor escutando na porta {}...\n", port);
+    // com porta 0 so agora o sistema sabe qual porta escolheu
+    sockaddr_in bound{};
+    socklen_t bound_size = sizeof(bound);
+    if(getsockname(m_server_socket.get(), reinterpret_cast<sockaddr*>(&bound), &bound_size) < 0) {
+        throw std::runtime_error("Falha no getsockname.\n");
+    }
+    m_port = ntohs(bound.sin_port);
+
+    std::cout << std::format("Servidor escutando na porta {}...\n", m_port);
 }
 
-void Server::run(){
-    while(true) {
+void Server::serve_one() {
+    int fd;
+    do {
         // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
-        Socket client{accept(m_server_socket.get(), nullptr, nullptr)};
+        fd = accept(m_server_socket.get(), nullptr, nullptr);
+    } while(fd < 0 && errno == EINTR);  // um sinal interrompeu a espera: tenta de novo
 
-        if(!client.valid()) {
-            std::cerr <<  "Falha ao aceitar conexao.\n";
-            continue;
-        }
+    Socket client{fd};
+    if(!client.valid()) {
+        std::cerr << "Falha ao aceitar conexao.\n";
+        return;
+    }
 
-        // SO_NOSIGPIPE e por socket: precisa ser definido em cada cliente aceito
-        if(!client.set_no_sigpipe()) {
-            std::cerr << "Falha ao definir SO_NOSIGPIPE no cliente.\n";
-            continue;
-        }
+    // SO_NOSIGPIPE e por socket: precisa ser definido em cada cliente aceito
+    if(!client.set_no_sigpipe()) {
+        std::cerr << "Falha ao definir SO_NOSIGPIPE no cliente.\n";
+        return;
+    }
 
-        std::cout << "\n--- Novo Cliente Conectado! ---\n";
+    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes));
+    if(response && !client.send_all(response->serialize())) {
+        std::cerr << "Falha ao enviar resposta.\n";
+    }
+    // sem close(): o destrutor de 'client' fecha o fd ao sair da funcao
+}
 
-        ReadResult request = read_request_head(client, kMaxRequestHeadBytes);
-
-        if (request.status == ReadStatus::TOO_LARGE) {
-            if (!client.send_all("HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")) {
-                std::cerr << "Falha ao enviar resposta 431.\n";
-            }
-            continue;
-        }
-        if (request.status != ReadStatus::COMPLETE) {
-            std::cout << "Conexao encerrada antes de completar a requisicao.\n";
-            continue;
-        }
-
-        std::cout << std::format("Requisicao recebida:\n{}\n", request.data);
-
-        // TODO(passo 6): passar request.data pelo HttpParser e montar a resposta certa
-        const std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello Citius!";
-        if (!client.send_all(response)) {
-            std::cerr << "Falha ao enviar resposta.\n";
-        }
-
-        // sem close(): o destrutor de 'client' fecha o fd ao fim de cada volta do laço
-        std::cout << "Conexao encerrada.\n";
+void Server::run() {
+    while(true) {
+        serve_one();
     }
 }
 
