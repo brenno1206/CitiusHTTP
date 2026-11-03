@@ -1,6 +1,7 @@
 #include "citius/net/Listener.hpp"
 #include <arpa/inet.h> // IWYU pragma: keep (htons, ntohs)
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <format>
 #include <netinet/in.h>
