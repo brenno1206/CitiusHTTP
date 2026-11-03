@@ -2,7 +2,7 @@
 
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção (Fases 0 a 5 concluídas). O servidor aceita conexões e as atende em paralelo com um thread pool (fila cheia responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fases 0 a 6 concluídas). O servidor aceita conexões e as atende em paralelo com um thread pool (fila cheia responde 503; Ctrl+C encerra de forma graciosa); as conexões são persistentes (keep-alive, com timeouts e limite de requisições), cada requisição é lida inteira em laço (cabeça até 8 KB, corpo com `Content-Length` até 1 MB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 408, 413, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -218,6 +218,24 @@ curl -v http://localhost:8080/          # -v mostra a requisição e a resposta
 
 Ou abra `http://localhost:8080` no navegador. Inicie o servidor **na raiz do projeto**: a pasta pública `www/` é relativa ao diretório de trabalho (de outro lugar, tudo responde 404). Para parar o servidor: `Ctrl+C`.
 
+Opções de linha de comando (`./build/citius_server --help` mostra a lista completa):
+
+```bash
+./build/citius_server --port 9090 --root site --threads 4 --log-level debug
+```
+
+| Opção | O que faz | Padrão |
+|---|---|---|
+| `--port N` | porta TCP (0 = o SO escolhe) | 8080 |
+| `--root PASTA` | pasta dos arquivos públicos | `www` |
+| `--threads N` | threads do pool (0 = uma por núcleo) | 0 |
+| `--max-queued N` | clientes esperando uma thread; acima disso, 503 | 128 |
+| `--read-timeout-ms N` | espera máxima por dados do cliente; estourou, 408 | 10000 |
+| `--idle-timeout-ms N` | espera da próxima requisição numa conexão keep-alive | 5000 |
+| `--log-level NIVEL` | `debug`, `info`, `warn` ou `error` | `info` |
+
+Cada linha de log tem hora e nível (`2026-11-03 14:20:01 [INFO] ...`); com `--log-level debug` aparece também uma linha por requisição (`GET /ping -> 200`). Códigos de saída: 0 sucesso, 1 falha ao iniciar (ex.: porta ocupada), 2 argumento inválido.
+
 Testes (GoogleTest, baixado automaticamente pelo CMake):
 
 ```bash
@@ -254,7 +272,7 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 | **3. Roteamento** ✅ | `Router` com handlers registráveis (`router.get("/ping", ...)`), 405 Method Not Allowed | `std::function`, design de API |
 | **4. Concorrência** ✅ | Thread pool; tratamento de múltiplos clientes; encerramento gracioso | Threads, mutex, condition variable, sinais |
 | **5. HTTP robusto** ✅ | Keep-alive, timeouts, limites de tamanho, corpo da requisição (POST) com `Content-Length`, códigos de erro corretos | RFC 9112, defesa contra abuso |
-| **6. Observabilidade e configuração** | Logger com níveis, configuração por linha de comando/arquivo | Design de módulos transversais |
+| **6. Observabilidade e configuração** ✅ | Logger com níveis, configuração por linha de comando/arquivo | Design de módulos transversais |
 | **7. Alta performance** | Event loop com `kqueue`/`epoll`, benchmarks, perfil | I/O assíncrono, medição |
 | **8. Acabamento profissional** | CI no GitHub Actions, sanitizers, clang-tidy, ADRs, README com resultados de benchmark | Engenharia de software |
 
