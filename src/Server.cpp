@@ -2,6 +2,7 @@
 #include "citius/HttpParser.hpp"
 #include "citius/HttpResponse.hpp"
 #include "citius/RequestReader.hpp"
+#include "citius/StaticFiles.hpp"
 #include <arpa/inet.h>  // ntohs()
 #include <cerrno>
 #include <format>
@@ -11,6 +12,7 @@
 #include <stdexcept>    // Para lançar std::runtime_error
 #include <string>
 #include <sys/socket.h> // Para socket(), bind(), listen()
+#include <utility>      // std::move
 
 namespace citius {
 
@@ -31,7 +33,7 @@ std::string_view method_name(HttpMethod method) {
 }
 
 // Decide a resposta para o que foi lido do cliente; std::nullopt = nao ha a quem responder.
-std::optional<HttpResponse> build_response(const ReadResult& head) {
+std::optional<HttpResponse> build_response(const ReadResult& head, const std::filesystem::path& root) {
     switch (head.status) {
         case ReadStatus::TOO_LARGE:
             std::cout << "(cabecalhos grandes demais) -> 431\n";
@@ -51,19 +53,19 @@ std::optional<HttpResponse> build_response(const ReadResult& head) {
         return HttpResponse::make_error(status);
     }
 
-    // TODO(Fases 2 e 3): servir arquivos de www/ e rotear; por enquanto a resposta e fixa
-    HttpResponse response{StatusCode::OK};
-    response.set_body("Hello Citius!");
+    // TODO(Fase 3): o Router decide entre handlers registrados e arquivos estaticos
+    HttpResponse response = serve_static(root, *parsed.request);
     // fechamos a conexao apos cada resposta; a RFC pede que o servidor avise
     (void)response.set_header("Connection", "close");
 
-    std::cout << std::format("{} {} -> 200\n", method_name(parsed.request->method), parsed.request->path);
+    std::cout << std::format("{} {} -> {}\n", method_name(parsed.request->method), parsed.request->path,
+                             static_cast<int>(response.status()));
     return response;
 }
 
 } // namespace
 
-Server::Server(std::uint16_t port) {
+Server::Server(std::uint16_t port, std::filesystem::path root) : m_root(std::move(root)) {
     start(port);
 }
 
@@ -123,7 +125,7 @@ void Server::serve_one() {
         return;
     }
 
-    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes));
+    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes), m_root);
     if(response && !client.send_all(response->serialize())) {
         std::cerr << "Falha ao enviar resposta.\n";
     }

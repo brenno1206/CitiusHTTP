@@ -3,6 +3,8 @@
 #include <arpa/inet.h>
 #include <array>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <string>
@@ -15,6 +17,20 @@ using citius::Server;
 using citius::Socket;
 
 namespace {
+
+// Pasta publica de teste (criada uma vez): index.html, style.css e um segredo FORA da raiz.
+const std::filesystem::path& raiz_de_teste() {
+    static const std::filesystem::path root = [] {
+        auto base = std::filesystem::temp_directory_path() / "citius_server_test";
+        std::filesystem::remove_all(base);
+        std::filesystem::create_directories(base / "www");
+        std::ofstream{base / "www" / "index.html"} << "Hello Citius!";
+        std::ofstream{base / "www" / "style.css"} << "body{}";
+        std::ofstream{base / "secret.txt"} << "segredo";
+        return base / "www";
+    }();
+    return root;
+}
 
 // Conecta em 127.0.0.1:port. Um timeout de leitura evita que um bug deixe o teste preso.
 Socket conectar(std::uint16_t port) {
@@ -70,19 +86,19 @@ bool comeca_com(const std::string& texto, const std::string& prefixo) {
 } // namespace
 
 TEST(ServerTest, PortaZeroEscolheUmaPortaLivre) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     EXPECT_NE(server.port(), 0);
 }
 
 TEST(ServerTest, ResponderGetValidoCom200) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     std::string resposta = requisitar(server, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
     EXPECT_EQ(resposta,
               "HTTP/1.1 200 OK\r\n"
-              "Content-Type: text/plain; charset=utf-8\r\n"
+              "Content-Type: text/html; charset=utf-8\r\n"
               "Connection: close\r\n"
               "Content-Length: 13\r\n"
               "\r\n"
@@ -90,7 +106,7 @@ TEST(ServerTest, ResponderGetValidoCom200) {
 }
 
 TEST(ServerTest, MontaRequisicaoEnviadaEmPedacos) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     std::string resposta = requisitar(server, {"GET /index.html HT", "TP/1.1\r\nHo", "st: x\r\n\r", "\n"});
 
@@ -98,13 +114,13 @@ TEST(ServerTest, MontaRequisicaoEnviadaEmPedacos) {
 }
 
 TEST(ServerTest, Http10SemHostEhAceito) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     EXPECT_TRUE(comeca_com(requisitar(server, "GET / HTTP/1.0\r\n\r\n"), "HTTP/1.1 200 OK\r\n"));
 }
 
 TEST(ServerTest, HostAusenteEm11Da400) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     std::string resposta = requisitar(server, "GET / HTTP/1.1\r\n\r\n");
 
@@ -113,21 +129,21 @@ TEST(ServerTest, HostAusenteEm11Da400) {
 }
 
 TEST(ServerTest, MetodoDesconhecidoDa501) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     EXPECT_TRUE(comeca_com(requisitar(server, "FOO / HTTP/1.1\r\nHost: x\r\n\r\n"),
                            "HTTP/1.1 501 Not Implemented\r\n"));
 }
 
 TEST(ServerTest, VersaoNaoSuportadaDa505) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     EXPECT_TRUE(comeca_com(requisitar(server, "GET / HTTP/2.0\r\nHost: x\r\n\r\n"),
                            "HTTP/1.1 505 HTTP Version Not Supported\r\n"));
 }
 
 TEST(ServerTest, AlvoMuitoLongoDa414) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     std::string requisicao = "GET /" + std::string(3000, 'a') + " HTTP/1.1\r\nHost: x\r\n\r\n";
 
@@ -135,7 +151,7 @@ TEST(ServerTest, AlvoMuitoLongoDa414) {
 }
 
 TEST(ServerTest, MuitosCabecalhosDa431) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     std::string requisicao = "GET / HTTP/1.1\r\nHost: x\r\n";
     for (int i = 0; i < 70; ++i) {
@@ -148,7 +164,7 @@ TEST(ServerTest, MuitosCabecalhosDa431) {
 }
 
 TEST(ServerTest, CabecaMaiorQue8KbSemFimDa431) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     // 8193 bytes (um acima do limite) e sem "\r\n\r\n": o servidor le tudo antes de responder
     std::string requisicao = "GET / HTTP/1.1\r\nX: " + std::string(8193 - 19, 'a');
@@ -159,7 +175,7 @@ TEST(ServerTest, CabecaMaiorQue8KbSemFimDa431) {
 }
 
 TEST(ServerTest, ContentLengthDaRespostaCombinaComOCorpo) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     std::string resposta = requisitar(server, "GET /x HTTP/1.1\r\nHost: x\r\n\r\n");
 
@@ -170,7 +186,7 @@ TEST(ServerTest, ContentLengthDaRespostaCombinaComOCorpo) {
 }
 
 TEST(ServerTest, ClienteQueFechaSemEnviarNadaNaoDerrubaOServidor) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     std::thread servidor([&] { server.serve_one(); });
     { Socket cliente = conectar(server.port()); }  // conecta e fecha
@@ -181,9 +197,46 @@ TEST(ServerTest, ClienteQueFechaSemEnviarNadaNaoDerrubaOServidor) {
 }
 
 TEST(ServerTest, AtendeClientesEmSequencia) {
-    Server server{0};
+    Server server{0, raiz_de_teste()};
 
     for (int i = 0; i < 3; ++i) {
         EXPECT_TRUE(comeca_com(requisitar(server, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"), "HTTP/1.1 200 OK\r\n"));
     }
+}
+
+TEST(ServerTest, ServeCssComTipoCerto) {
+    Server server{0, raiz_de_teste()};
+
+    std::string resposta = requisitar(server, "GET /style.css?v=1 HTTP/1.1\r\nHost: x\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n"));
+    EXPECT_NE(resposta.find("Content-Type: text/css; charset=utf-8\r\n"), std::string::npos);
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nbody{}"));
+}
+
+TEST(ServerTest, ArquivoInexistenteDa404) {
+    Server server{0, raiz_de_teste()};
+
+    EXPECT_TRUE(comeca_com(requisitar(server, "GET /nao-existe HTTP/1.1\r\nHost: x\r\n\r\n"),
+                           "HTTP/1.1 404 Not Found\r\n"));
+}
+
+TEST(ServerTest, PathTraversalNaoVazaArquivoDeForaDaRaiz) {
+    for (const char* alvo : {"/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt"}) {
+        Server server{0, raiz_de_teste()};
+
+        std::string resposta = requisitar(server, std::string("GET ") + alvo + " HTTP/1.1\r\nHost: x\r\n\r\n");
+
+        EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 404 Not Found\r\n")) << alvo;
+        EXPECT_EQ(resposta.find("segredo"), std::string::npos) << alvo;
+    }
+}
+
+TEST(ServerTest, PostEmArquivoEstaticoDa405) {
+    Server server{0, raiz_de_teste()};
+
+    std::string resposta = requisitar(server, "POST / HTTP/1.1\r\nHost: x\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    EXPECT_NE(resposta.find("Allow: GET\r\n"), std::string::npos);
 }
