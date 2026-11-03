@@ -1,6 +1,25 @@
 cmake_minimum_required(VERSION 3.20)
 project(CitiusHTTP LANGUAGES CXX)
 
+# O projeto usa std::format (C++20). Em bibliotecas padrao mais antigas ele nao existe, e o erro de compilacao
+# resultante e obscuro: melhor verificar aqui e dizer o que fazer. No macOS, <format> da libc++ tambem depende do
+# deployment target (CMAKE_OSX_DEPLOYMENT_TARGET), por isso o teste usa as mesmas flags do projeto.
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_FLAGS "-std=c++20")
+check_cxx_source_compiles("
+    #include <format>
+    #include <string>
+    int main() { return std::format(\"{}\", 1).size() == 1 ? 0 : 1; }
+" CITIUS_HAS_STD_FORMAT)
+unset(CMAKE_REQUIRED_FLAGS)
+if(NOT CITIUS_HAS_STD_FORMAT)
+    message(FATAL_ERROR
+        "Seu compilador/biblioteca padrao nao tem std::format (C++20).\n"
+        "  Linux: gcc 13 ou mais novo, ou clang 17+ com libc++ 17+ (Ubuntu 24.04 serve).\n"
+        "  macOS: Xcode 15 ou mais novo e deployment target 13.3+ "
+        "(cmake -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3).")
+endif()
+
 # Sem tipo de build escolhido, o CMake compila sem -g nem -O (fica pior que Debug e Release).
 # Debug e o padrao para desenvolvimento; para medir desempenho use -DCMAKE_BUILD_TYPE=Release
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
