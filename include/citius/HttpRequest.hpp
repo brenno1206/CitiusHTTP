@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <string>
@@ -38,6 +39,8 @@ struct HttpRequest {
     std::string path;    ///< alvo da requisicao como veio, incluindo query string, ex.: "/busca?q=1"
     std::string version; ///< "HTTP/1.0" ou "HTTP/1.1"
     Headers headers;
+    std::size_t content_length = 0; ///< tamanho do corpo declarado em Content-Length (0 se ausente)
+    std::string body;               ///< corpo; o HttpParser nao o preenche, quem le o socket o faz
 };
 
 } // namespace citius

@@ -219,3 +219,53 @@ TEST(HttpParserTest, LimitaAQuantidadeDeCabecalhos) {
     EXPECT_TRUE(HttpParser::parse(com_n_cabecalhos(64)).ok());
     espera_erro(com_n_cabecalhos(65), ParseError::HEADERS_TOO_LARGE);
 }
+
+// ---- Content-Length ----
+
+TEST(HttpParserTest, SemContentLengthOCorpoTemTamanhoZero) {
+    EXPECT_EQ(HttpParser::parse(req("GET / HTTP/1.1")).request->content_length, 0u);
+}
+
+TEST(HttpParserTest, LeContentLength) {
+    auto resultado = HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 42\r\n"));
+
+    ASSERT_TRUE(resultado.ok());
+    EXPECT_EQ(resultado.request->content_length, 42u);
+}
+
+TEST(HttpParserTest, ContentLengthZeroEValido) {
+    auto resultado = HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 0\r\n"));
+
+    ASSERT_TRUE(resultado.ok());
+    EXPECT_EQ(resultado.request->content_length, 0u);
+}
+
+TEST(HttpParserTest, ContentLengthInvalidoDa400) {
+    for (const char* valor : {"abc", "-1", "+5", "1.5", "", "0x10", "5 5", "5, 5", "5,6", "1e3"}) {
+        espera_erro(req("POST / HTTP/1.1", std::string("Host: x\r\nContent-Length: ") + valor + "\r\n"),
+                    ParseError::BAD_REQUEST);
+    }
+}
+
+TEST(HttpParserTest, ContentLengthRepetidoDa400) {
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 5\r\nContent-Length: 5\r\n"),
+                ParseError::BAD_REQUEST);
+}
+
+TEST(HttpParserTest, ContentLengthAcimaDoLimiteDa413) {
+    auto acima = std::to_string(HttpParser::kMaxBodyLength + 1);
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: " + acima + "\r\n"),
+                ParseError::PAYLOAD_TOO_LARGE);
+    auto no_limite = std::to_string(HttpParser::kMaxBodyLength);
+    EXPECT_TRUE(HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: " + no_limite + "\r\n")).ok());
+}
+
+TEST(HttpParserTest, ContentLengthGigantesco413SemEstourar) {
+    // mais digitos que cabem em size_t: nao pode dar overflow nem excecao
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 99999999999999999999999999\r\n"),
+                ParseError::PAYLOAD_TOO_LARGE);
+}
+
+TEST(HttpParserTest, ToStatusDoPayloadTooLarge) {
+    EXPECT_EQ(citius::to_status(ParseError::PAYLOAD_TOO_LARGE), citius::StatusCode::PAYLOAD_TOO_LARGE);
+}

@@ -107,6 +107,27 @@ std::optional<ParseError> parse_header_line(std::string_view line, HttpRequest::
     return std::nullopt;
 }
 
+// Content-Length = 1*DIGIT (RFC 9110, secao 8.6). Valores repetidos chegam juntados com ", " e
+// por isso caem na regra "so digitos".
+std::optional<ParseError> parse_content_length(const HttpRequest::Headers& headers, std::size_t& length) {
+    auto it = headers.find("content-length");
+    if (it == headers.end()) return std::nullopt;
+
+    const std::string& text = it->second;
+    if (text.empty() || !std::ranges::all_of(text, [](char c) { return c >= '0' && c <= '9'; })) {
+        return ParseError::BAD_REQUEST;
+    }
+
+    // acumula digito a digito parando assim que passa do limite: nunca estoura size_t
+    std::size_t value = 0;
+    for (char c : text) {
+        value = value * 10 + static_cast<std::size_t>(c - '0');
+        if (value > HttpParser::kMaxBodyLength) return ParseError::PAYLOAD_TOO_LARGE;
+    }
+    length = value;
+    return std::nullopt;
+}
+
 } // namespace
 
 StatusCode to_status(ParseError error) noexcept {
@@ -116,6 +137,7 @@ StatusCode to_status(ParseError error) noexcept {
         case ParseError::URI_TOO_LONG: return StatusCode::URI_TOO_LONG;
         case ParseError::VERSION_NOT_SUPPORTED: return StatusCode::VERSION_NOT_SUPPORTED;
         case ParseError::HEADERS_TOO_LARGE: return StatusCode::HEADERS_TOO_LARGE;
+        case ParseError::PAYLOAD_TOO_LARGE: return StatusCode::PAYLOAD_TOO_LARGE;
     }
     return StatusCode::BAD_REQUEST;  // valor fora do enum: tratar como requisicao invalida
 }
@@ -150,6 +172,9 @@ ParseResult HttpParser::parse(std::string_view raw_head) {
     // RFC 9112, secao 3.2: em HTTP/1.1 o servidor deve responder 400 sem Host, ou com Host repetido
     if (request.version == "HTTP/1.1" && host_count != 1) {
         return ParseResult::failure(ParseError::BAD_REQUEST);
+    }
+    if (auto error = parse_content_length(request.headers, request.content_length)) {
+        return ParseResult::failure(*error);
     }
     return ParseResult::success(std::move(request));
 }

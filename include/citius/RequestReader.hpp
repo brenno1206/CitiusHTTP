@@ -2,6 +2,7 @@
 #include "citius/Socket.hpp"
 #include <cstddef>
 #include <string>
+#include <string_view>
 
 namespace citius {
 
@@ -17,6 +18,7 @@ enum class ReadStatus {
 struct ReadResult {
     ReadStatus status = ReadStatus::ERROR;
     std::string data; ///< bytes recebidos; pode conter o inicio do corpo apos os cabecalhos
+    std::size_t head_size = 0; ///< bytes de data ate o fim de "\r\n\r\n" (so com COMPLETE); o resto e corpo
 };
 
 /// Le do socket, em laco, ate encontrar o fim dos cabecalhos HTTP (\r\n\r\n).
@@ -30,5 +32,13 @@ struct ReadResult {
 /// @param socket     conexao do cliente
 /// @param max_bytes  teto para o total lido; protege contra clientes que nunca terminam
 [[nodiscard]] ReadResult read_request_head(Socket& socket, std::size_t max_bytes);
+
+/// Completa o corpo da requisicao: parte dele pode ja ter chegado junto com a cabeca.
+///
+/// @param already_read bytes do corpo que ja estao em maos (data.substr(head_size) da cabeca)
+/// @param length       tamanho declarado em Content-Length (o chamador ja o limitou)
+/// @return COMPLETE com ReadResult::data tendo exatamente @p length bytes (bytes a mais, que seriam
+///         de outra requisicao, sao descartados), ou CLOSED/TIMEOUT/ERROR se a leitura falhou.
+[[nodiscard]] ReadResult read_request_body(Socket& socket, std::string_view already_read, std::size_t length);
 
 } // namespace citius

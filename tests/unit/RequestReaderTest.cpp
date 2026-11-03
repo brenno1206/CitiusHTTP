@@ -10,6 +10,7 @@
 
 using citius::ReadStatus;
 using citius::Socket;
+using citius::read_request_body;
 using citius::read_request_head;
 
 namespace {
@@ -137,4 +138,62 @@ TEST(RequestReaderTest, TimeoutNoMeioDaRequisicaoMantemOsBytesLidos) {
 
     EXPECT_EQ(resultado.status, ReadStatus::TIMEOUT);
     EXPECT_EQ(resultado.data, "GET / HTTP/1.1\r\nHo");
+}
+
+// ---- cabeca + corpo ----
+
+TEST(RequestReaderTest, InformaOndeTerminaACabeca) {
+    auto par = novo_par();
+    ASSERT_TRUE(par.cliente.send_all("POST / HTTP/1.1\r\n\r\ncorpo"));
+
+    auto resultado = read_request_head(par.servidor, kLimite);
+
+    EXPECT_EQ(resultado.head_size, std::string("POST / HTTP/1.1\r\n\r\n").size());
+}
+
+TEST(RequestReaderTest, CorpoJaRecebidoJuntoComACabecaNaoLeDoSocket) {
+    auto par = novo_par();  // nada sera enviado: se tentasse ler, daria timeout
+    ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
+
+    auto resultado = read_request_body(par.servidor, "abcde", 5);
+
+    EXPECT_EQ(resultado.status, ReadStatus::COMPLETE);
+    EXPECT_EQ(resultado.data, "abcde");
+}
+
+TEST(RequestReaderTest, CompletaCorpoQueChegaAosPedacos) {
+    auto par = novo_par();
+    auto envio = enviar_em_pedacos(par.cliente, {"cde", "fgh"});
+
+    auto resultado = read_request_body(par.servidor, "ab", 8);
+    envio.join();
+
+    EXPECT_EQ(resultado.status, ReadStatus::COMPLETE);
+    EXPECT_EQ(resultado.data, "abcdefgh");
+}
+
+TEST(RequestReaderTest, CorpoNaoPassaDoContentLength) {
+    auto par = novo_par();
+    ASSERT_TRUE(par.cliente.send_all("cdefXXXX"));  // sobra: seria a proxima requisicao
+
+    auto resultado = read_request_body(par.servidor, "ab", 6);
+
+    EXPECT_EQ(resultado.status, ReadStatus::COMPLETE);
+    EXPECT_EQ(resultado.data, "abcdef");
+}
+
+TEST(RequestReaderTest, CorpoIncompletoComClienteFechadoDaClosed) {
+    auto par = novo_par();
+    ASSERT_TRUE(par.cliente.send_all("cd"));
+    par.cliente.reset();
+
+    EXPECT_EQ(read_request_body(par.servidor, "ab", 10).status, ReadStatus::CLOSED);
+}
+
+TEST(RequestReaderTest, CorpoParadoDaTimeout) {
+    auto par = novo_par();
+    ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
+    ASSERT_TRUE(par.cliente.send_all("cd"));
+
+    EXPECT_EQ(read_request_body(par.servidor, "ab", 10).status, ReadStatus::TIMEOUT);
 }

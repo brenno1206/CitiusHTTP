@@ -445,3 +445,64 @@ TEST(ServerTest, ClienteMudoNaoPrendeOUnicoSlotDoPool) {
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
 }
+
+// ---- corpo da requisicao ----
+
+namespace {
+// Registra POST /eco, que devolve o corpo recebido.
+void registrar_eco(Server& server) {
+    server.router().post("/eco", [](const citius::HttpRequest& request) {
+        citius::HttpResponse response;
+        response.set_body(request.body, "text/plain");
+        return response;
+    });
+}
+} // namespace
+
+TEST(ServerTest, PostComCorpoChegaAoHandler) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nhello")) << resposta;
+}
+
+TEST(ServerTest, CorpoEnviadoEmPedacosLentosEJuntado) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(server, std::vector<std::string>{
+        "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc", "def", "ghij"});
+
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nabcdefghij")) << resposta;
+}
+
+TEST(ServerTest, ContentLengthAcimaDoLimiteDa413SemLerOCorpo) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 999999999\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 413 Content Too Large\r\n")) << resposta;
+}
+
+TEST(ServerTest, ContentLengthInvalidoDa400) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: abc\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 400 Bad Request\r\n")) << resposta;
+}
+
+TEST(ServerTest, CorpoPrometidoMasNaoEnviadoDa408) {
+    Server server{0, raiz_de_teste()};
+    server.set_read_timeout(std::chrono::milliseconds(100));
+    registrar_eco(server);
+
+    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
+}

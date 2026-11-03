@@ -17,6 +17,7 @@
 #include <poll.h>
 #include <stdexcept>    // Para lançar std::runtime_error
 #include <string>
+#include <string_view>
 #include <sys/socket.h> // Para socket(), bind(), listen()
 #include <thread>
 #include <utility>      // std::move
@@ -46,18 +47,22 @@ HttpResponse route_safely(const Router& router, const HttpRequest& request) {
     return HttpResponse::make_error(StatusCode::INTERNAL_SERVER_ERROR);
 }
 
+HttpResponse close_with(StatusCode status) {
+    HttpResponse response = HttpResponse::make_error(status);
+    (void)response.set_header("Connection", "close");
+    return response;
+}
+
 // Decide a resposta para o que foi lido do cliente; std::nullopt = nao ha a quem responder.
-std::optional<HttpResponse> build_response(const ReadResult& head, const Router& router) {
+// Le o corpo do socket quando a cabeca anuncia um Content-Length.
+std::optional<HttpResponse> build_response(const ReadResult& head, Socket& client, const Router& router) {
     switch (head.status) {
         case ReadStatus::TOO_LARGE:
             log_info("(cabecalhos grandes demais) -> 431");
             return HttpResponse::make_error(StatusCode::HEADERS_TOO_LARGE);
-        case ReadStatus::TIMEOUT: {
+        case ReadStatus::TIMEOUT:
             log_info("(cliente parado) -> 408");
-            HttpResponse timeout = HttpResponse::make_error(StatusCode::REQUEST_TIMEOUT);
-            (void)timeout.set_header("Connection", "close");
-            return timeout;
-        }
+            return close_with(StatusCode::REQUEST_TIMEOUT);
         case ReadStatus::CLOSED:
         case ReadStatus::ERROR:
             log_info("(conexao encerrada antes de completar a requisicao)");
@@ -66,11 +71,26 @@ std::optional<HttpResponse> build_response(const ReadResult& head, const Router&
             break;
     }
 
-    ParseResult parsed = HttpParser::parse(head.data);
+    // so a cabeca vai ao parser; o que veio depois dela e o comeco do corpo
+    const std::string_view data{head.data};
+    ParseResult parsed = HttpParser::parse(data.substr(0, head.head_size));
     if (!parsed.ok()) {
         StatusCode status = to_status(*parsed.error);
         log_info(std::format("(requisicao invalida) -> {}", static_cast<int>(status)));
         return HttpResponse::make_error(status);
+    }
+
+    if (parsed.request->content_length > 0) {
+        ReadResult body = read_request_body(client, data.substr(head.head_size), parsed.request->content_length);
+        if (body.status == ReadStatus::TIMEOUT) {
+            log_info("(corpo incompleto, cliente parado) -> 408");
+            return close_with(StatusCode::REQUEST_TIMEOUT);
+        }
+        if (body.status != ReadStatus::COMPLETE) {
+            log_info("(conexao encerrada antes de completar o corpo)");
+            return std::nullopt;
+        }
+        parsed.request->body = std::move(body.data);
     }
 
     HttpResponse response = route_safely(router, *parsed.request);
@@ -179,7 +199,7 @@ void Server::handle_client(Socket& client) const {
     if (!client.set_recv_timeout(std::chrono::milliseconds(m_read_timeout_ms.load()))) {
         log_error("Falha ao definir o timeout de leitura no cliente.");
     }
-    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes), m_router);
+    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes), client, m_router);
     if (response && !client.send_all(response->serialize())) {
         log_error("Falha ao enviar resposta.");
     }
