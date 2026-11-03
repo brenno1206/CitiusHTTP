@@ -11,6 +11,7 @@ add_library(citius_core STATIC
     src/Mime.cpp
     src/StaticPath.cpp
     src/StaticFiles.cpp
+    src/Router.cpp
     src/Socket.cpp
     src/RequestReader.cpp
     src/Server.cpp

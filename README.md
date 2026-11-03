@@ -2,7 +2,7 @@
 
 Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
 
-> **Status:** em construção (Fases 0, 1 e 2 concluídas). O servidor aceita uma conexão, lê a requisição inteira em laço (limite de 8 KB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Ainda não tem roteador. Veja o [Roadmap](#6-roadmap-por-fases).
+> **Status:** em construção (Fases 0, 1, 2 e 3 concluídas). O servidor aceita uma conexão, lê a requisição inteira em laço (limite de 8 KB), interpreta com o `HttpParser` e responde com `HttpResponse`: serve arquivos de `www/` (com `Content-Type` correto, 404, 405 e proteção contra path traversal) ou o status de erro certo (400, 414, 431, 501, 505). Há testes unitários e de integração (servidor real em porta efêmera). Um `Router` permite registrar handlers (`router.get("/ping", ...)`), com 405 e `Allow` quando o método não bate. Veja o [Roadmap](#6-roadmap-por-fases).
 
 ---
 
@@ -243,7 +243,7 @@ Cada fase termina com o projeto compilando, testado e commitado. **Não pule fas
 | **0. Base saudável** ✅ | Corrigir bugs do código atual, `CMakeLists` modernizado (biblioteca + executável), namespace, `.clang-format`, primeiro teste | CMake, namespaces, testes |
 | **1. Núcleo de rede e parser** ✅ | Classe `Socket` RAII, `SO_REUSEADDR`, laço de leitura, parser completo da linha de requisição e cabeçalhos, `HttpResponse` com serialização | RAII, TCP como fluxo, `string_view`, parsing |
 | **2. Arquivos estáticos** ✅ | Servir `www/`, tipos MIME, 404, proteção contra path traversal, `Content-Length` correto | Sistema de arquivos (`std::filesystem`), segurança |
-| **3. Roteamento** | `Router` com handlers registráveis (`router.get("/ping", ...)`), 405 Method Not Allowed | `std::function`, design de API |
+| **3. Roteamento** ✅ | `Router` com handlers registráveis (`router.get("/ping", ...)`), 405 Method Not Allowed | `std::function`, design de API |
 | **4. Concorrência** | Thread pool; tratamento de múltiplos clientes; encerramento gracioso | Threads, mutex, condition variable, sinais |
 | **5. HTTP robusto** | Keep-alive, timeouts, limites de tamanho, corpo da requisição (POST) com `Content-Length`, códigos de erro corretos | RFC 9112, defesa contra abuso |
 | **6. Observabilidade e configuração** | Logger com níveis, configuração por linha de comando/arquivo | Design de módulos transversais |

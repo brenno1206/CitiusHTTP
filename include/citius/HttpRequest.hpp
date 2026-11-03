@@ -2,6 +2,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <string_view>
 
 namespace citius {
 
@@ -13,6 +14,18 @@ enum class HttpMethod {
     DELETE,
     UNKNOWN
 };
+
+/// @return o nome do metodo como aparece na requisicao ("GET"), ou "?" para UNKNOWN.
+[[nodiscard]] constexpr std::string_view method_name(HttpMethod method) noexcept {
+    switch (method) {
+        case HttpMethod::GET: return "GET";
+        case HttpMethod::POST: return "POST";
+        case HttpMethod::PUT: return "PUT";
+        case HttpMethod::DELETE: return "DELETE";
+        case HttpMethod::UNKNOWN: break;
+    }
+    return "?";
+}
 
 /// Requisicao HTTP ja interpretada. Os campos sao copias (nao dependem do buffer original).
 struct HttpRequest {

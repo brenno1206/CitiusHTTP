@@ -1,5 +1,6 @@
 #pragma once
 
+#include "citius/Router.hpp"
 #include "citius/Socket.hpp"
 #include <cstdint>
 #include <filesystem>
@@ -20,6 +21,11 @@ public:
     /// @return a porta em que o servidor realmente escuta.
     [[nodiscard]] std::uint16_t port() const noexcept { return m_port; }
 
+    /// Roteador das requisicoes. Caminhos sem rota caem nos arquivos estaticos de @c root.
+    /// Registre as rotas antes de chamar run()/serve_one() (o Router nao e thread-safe para escrita).
+    /// Um handler que lance excecao vira resposta 500; o servidor continua de pe.
+    [[nodiscard]] Router& router() noexcept { return m_router; }
+
     /// Espera um cliente, le a requisicao, responde e fecha a conexao.
     /// Falhas de um cliente (conexao cortada, requisicao invalida) nao lancam: sao registradas.
     void serve_one();
@@ -33,6 +39,7 @@ private:
     Socket m_server_socket; ///< socket de escuta; fecha sozinho no destrutor
     std::uint16_t m_port = 0;
     std::filesystem::path m_root; ///< pasta de onde os arquivos estaticos sao servidos
+    Router m_router;              ///< rotas registradas + fallback para m_root
 };
 
 } // namespace citius
