@@ -16,6 +16,7 @@ add_executable(citius_tests
     unit/HttpResponseTest.cpp
     unit/MimeTest.cpp
     unit/StaticPathTest.cpp
+    unit/StaticFilesTest.cpp
     unit/SocketTest.cpp
     unit/RequestReaderTest.cpp
     integration/ServerTest.cpp
