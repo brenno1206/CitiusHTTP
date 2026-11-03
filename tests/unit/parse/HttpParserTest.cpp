@@ -271,8 +271,59 @@ TEST(HttpParserTest, ToStatusDoPayloadTooLarge) {
 
 // ---- Transfer-Encoding ----
 
-TEST(HttpParserTest, TransferEncodingSozinhoDa501) {
-    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nTransfer-Encoding: chunked\r\n"), ParseError::NOT_IMPLEMENTED);
+TEST(HttpParserTest, TransferEncodingChunkedSozinhoEAceito) {
+    ParseResult resultado = HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nTransfer-Encoding: chunked\r\n"));
+
+    ASSERT_TRUE(resultado.ok());
+    EXPECT_TRUE(resultado.request->chunked);
+    EXPECT_EQ(resultado.request->content_length, 0u); // o tamanho so se sabe depois de decodificar
+}
+
+TEST(HttpParserTest, SemTransferEncodingNaoEChunked) {
+    EXPECT_FALSE(HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 3\r\n")).request->chunked);
+}
+
+TEST(HttpParserTest, TransferEncodingChunkedNaoDependeDeMaiusculasNemEspacos) {
+    for (const char* valor : {"Chunked", "CHUNKED", "  chunked  ", "cHuNkEd"}) {
+        ParseResult resultado =
+            HttpParser::parse(req("POST / HTTP/1.1", std::string("Host: x\r\nTransfer-Encoding: ") + valor + "\r\n"));
+        ASSERT_TRUE(resultado.ok()) << valor;
+        EXPECT_TRUE(resultado.request->chunked) << valor;
+    }
+}
+
+TEST(HttpParserTest, OutraCodificacaoDeTransferenciaDa501) {
+    // so "chunked" e suportado (gzip, deflate, identity...): RFC 9112 6.1 manda responder 501
+    for (const char* valor : {"identity", "gzip", "deflate", "gzip, chunked", "compress"}) {
+        espera_erro(req("POST / HTTP/1.1", std::string("Host: x\r\nTransfer-Encoding: ") + valor + "\r\n"),
+                    ParseError::NOT_IMPLEMENTED);
+    }
+}
+
+TEST(HttpParserTest, ChunkedQueNaoEOUltimoOuRepetidoDa400) {
+    // RFC 9112 6.3: chunked precisa ser a ultima (e unica) codificacao final; do contrario a mensagem e ambigua
+    for (const char* valor : {"chunked, gzip", "chunked, chunked", "chunked,identity"}) {
+        espera_erro(req("POST / HTTP/1.1", std::string("Host: x\r\nTransfer-Encoding: ") + valor + "\r\n"),
+                    ParseError::BAD_REQUEST);
+    }
+}
+
+TEST(HttpParserTest, TransferEncodingRepetidoDa400) {
+    // duas linhas viram "chunked, chunked" na juncao: mesma regra
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n"),
+                ParseError::BAD_REQUEST);
+}
+
+TEST(HttpParserTest, TransferEncodingVazioOuComItemVazioDa400) {
+    for (const char* valor : {"", ",", "chunked,", ",chunked"}) {
+        espera_erro(req("POST / HTTP/1.1", std::string("Host: x\r\nTransfer-Encoding: ") + valor + "\r\n"),
+                    ParseError::BAD_REQUEST);
+    }
+}
+
+TEST(HttpParserTest, TransferEncodingEmHttp10Da400) {
+    // HTTP/1.0 nao tem "chunked": um cliente que o usa esta confuso (ou tentando smuggling)
+    espera_erro(req("POST / HTTP/1.0", "Transfer-Encoding: chunked\r\n"), ParseError::BAD_REQUEST);
 }
 
 TEST(HttpParserTest, TransferEncodingComContentLengthDa400) {
@@ -290,4 +341,48 @@ TEST(HttpParserTest, TransferEncodingNaoDependeDeMaiusculas) {
 TEST(HttpParserTest, TransferEncodingComContentLengthInvalidoContinuaSendo400) {
     espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: abc\r\nTransfer-Encoding: chunked\r\n"),
                 ParseError::BAD_REQUEST);
+}
+
+// ---- Expect ----
+
+TEST(HttpParserTest, Expect100ContinueMarcaARequisicao) {
+    ParseResult resultado =
+        HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n"));
+
+    ASSERT_TRUE(resultado.ok());
+    EXPECT_TRUE(resultado.request->expect_continue);
+}
+
+TEST(HttpParserTest, SemExpectNaoMarca) {
+    EXPECT_FALSE(
+        HttpParser::parse(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 5\r\n")).request->expect_continue);
+}
+
+TEST(HttpParserTest, Expect100ContinueNaoDependeDeMaiusculas) {
+    for (const char* valor : {"100-Continue", "100-CONTINUE", " 100-continue "}) {
+        ParseResult resultado = HttpParser::parse(
+            req("POST / HTTP/1.1", std::string("Host: x\r\nContent-Length: 1\r\nExpect: ") + valor + "\r\n"));
+        ASSERT_TRUE(resultado.ok()) << valor;
+        EXPECT_TRUE(resultado.request->expect_continue) << valor;
+    }
+}
+
+TEST(HttpParserTest, Expect100ContinueEmHttp10EIgnorado) {
+    // RFC 9110 10.1.1: um servidor ignora Expect em requisicoes HTTP/1.0
+    ParseResult resultado = HttpParser::parse(req("POST / HTTP/1.0", "Content-Length: 1\r\nExpect: 100-continue\r\n"));
+
+    ASSERT_TRUE(resultado.ok());
+    EXPECT_FALSE(resultado.request->expect_continue);
+}
+
+TEST(HttpParserTest, ExpectDesconhecidoDa417) {
+    for (const char* valor : {"foo", "100-continue, foo", "200-ok", "100-continue, 100-continue"}) {
+        espera_erro(req("POST / HTTP/1.1", std::string("Host: x\r\nContent-Length: 1\r\nExpect: ") + valor + "\r\n"),
+                    ParseError::EXPECTATION_FAILED);
+    }
+}
+
+TEST(HttpParserTest, ToStatusDoExpectationFailed) {
+    EXPECT_EQ(citius::to_status(ParseError::EXPECTATION_FAILED), citius::StatusCode::EXPECTATION_FAILED);
+    EXPECT_EQ(static_cast<int>(citius::StatusCode::EXPECTATION_FAILED), 417);
 }

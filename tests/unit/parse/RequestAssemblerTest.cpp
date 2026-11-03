@@ -259,3 +259,161 @@ TEST(RequestAssemblerTest, ContentLengthSemOCorpoFicaEsperando) {
     ASSERT_EQ(assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nab"), AssembleStatus::NEED_MORE);
     EXPECT_EQ(assembler.feed("c"), AssembleStatus::NEED_MORE);
 }
+
+// ---- corpo chunked ---------------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr std::string_view kChunkedHead = "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+std::string chunked_post(std::string_view chunks) {
+    return std::string(kChunkedHead) + std::string(chunks);
+}
+
+} // namespace
+
+TEST(RequestAssemblerTest, ChunkedCompletoDeUmaVezVemDecodificado) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(assembler.feed(chunked_post("5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n")), AssembleStatus::COMPLETE);
+    auto request = assembler.take_request();
+
+    EXPECT_EQ(request.body, "hello world");
+    EXPECT_EQ(request.content_length, 11u); // o tamanho real, conhecido so depois de decodificar
+    EXPECT_TRUE(request.chunked);
+    EXPECT_FALSE(assembler.has_buffered_data());
+}
+
+TEST(RequestAssemblerTest, ChunkedEmQualquerTamanhoDePedaco) {
+    const std::string raw = chunked_post("5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nTrailer: x\r\n\r\n");
+    for (std::size_t passo = 1; passo <= raw.size(); ++passo) {
+        RequestAssembler assembler;
+        AssembleStatus status = AssembleStatus::NEED_MORE;
+        for (std::size_t i = 0; i < raw.size(); i += passo) {
+            status = assembler.feed(std::string_view{raw}.substr(i, passo));
+            ASSERT_NE(status, AssembleStatus::ERROR) << "passo " << passo;
+        }
+        ASSERT_EQ(status, AssembleStatus::COMPLETE) << "passo " << passo;
+        EXPECT_EQ(assembler.take_request().body, "hello world") << "passo " << passo;
+    }
+}
+
+TEST(RequestAssemblerTest, ChunkedPeloMeioContaComoDadoGuardado) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(assembler.feed(chunked_post("5\r\nhel")), AssembleStatus::NEED_MORE);
+    EXPECT_TRUE(assembler.has_buffered_data()); // requisicao pela metade: vale o prazo de leitura
+}
+
+TEST(RequestAssemblerTest, ChunkedSeguidoDeOutraRequisicaoDeixaASobra) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(assembler.feed(chunked_post("3\r\nabc\r\n0\r\n\r\n") + std::string(kGet)), AssembleStatus::COMPLETE);
+    EXPECT_EQ(assembler.take_request().body, "abc");
+
+    ASSERT_EQ(assembler.feed(""), AssembleStatus::COMPLETE);
+    EXPECT_EQ(assembler.take_request().path, "/a");
+}
+
+TEST(RequestAssemblerTest, ChunkedInvalidoDa400) {
+    for (const char* chunks : {"xyz\r\nabc\r\n0\r\n\r\n", "5\nhello\r\n0\r\n\r\n", "5\r\nhelloXX0\r\n\r\n"}) {
+        RequestAssembler assembler;
+        ASSERT_EQ(assembler.feed(chunked_post(chunks)), AssembleStatus::ERROR) << chunks;
+        EXPECT_EQ(assembler.error_status(), StatusCode::BAD_REQUEST) << chunks;
+    }
+}
+
+TEST(RequestAssemblerTest, ChunkedGrandeDemaisDa413SemEsperarOsDados) {
+    RequestAssembler assembler;
+
+    // 0x100001 = 1 MiB + 1: passa do limite do corpo so pelo tamanho declarado
+    ASSERT_EQ(assembler.feed(chunked_post("100001\r\n")), AssembleStatus::ERROR);
+    EXPECT_EQ(assembler.error_status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+TEST(RequestAssemblerTest, ChunkedSomadoEstouraOLimiteDa413) {
+    RequestAssembler assembler;
+    const std::string bloco = "80000\r\n" + std::string(0x80000, 'x') + "\r\n"; // 512 KiB
+
+    ASSERT_EQ(assembler.feed(chunked_post(bloco)), AssembleStatus::NEED_MORE);
+    ASSERT_EQ(assembler.feed(bloco), AssembleStatus::NEED_MORE); // 1 MiB: no limite
+    ASSERT_EQ(assembler.feed("1\r\nx\r\n"), AssembleStatus::ERROR);
+    EXPECT_EQ(assembler.error_status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+TEST(RequestAssemblerTest, ChunkedComContentLengthDa400) {
+    RequestAssembler assembler;
+    const std::string raw =
+        "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+
+    ASSERT_EQ(assembler.feed(raw), AssembleStatus::ERROR);
+    EXPECT_EQ(assembler.error_status(), StatusCode::BAD_REQUEST);
+}
+
+// ---- Expect: 100-continue ----------------------------------------------------------------------------------------
+
+TEST(RequestAssemblerTest, ExpectComCorpoAindaPorChegarPedeOContinue) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"),
+              AssembleStatus::NEED_MORE);
+    EXPECT_TRUE(assembler.take_continue());  // o servidor deve mandar o "100 Continue" uma vez
+    EXPECT_FALSE(assembler.take_continue()); // e so uma
+
+    ASSERT_EQ(assembler.feed("hello"), AssembleStatus::COMPLETE);
+    EXPECT_FALSE(assembler.take_continue());
+    EXPECT_EQ(assembler.take_request().body, "hello");
+}
+
+TEST(RequestAssemblerTest, ExpectComCorpoJaPresenteNaoPedeContinue) {
+    RequestAssembler assembler;
+
+    // o cliente nao esperou o 100: nada a autorizar
+    ASSERT_EQ(assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello"),
+              AssembleStatus::COMPLETE);
+    EXPECT_FALSE(assembler.take_continue());
+}
+
+TEST(RequestAssemblerTest, ExpectSemCorpoNaoPedeContinue) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nExpect: 100-continue\r\n\r\n"),
+              AssembleStatus::COMPLETE);
+    EXPECT_FALSE(assembler.take_continue());
+}
+
+TEST(RequestAssemblerTest, ExpectComChunkedPedeOContinue) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(
+        assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n"),
+        AssembleStatus::NEED_MORE);
+    EXPECT_TRUE(assembler.take_continue());
+    ASSERT_EQ(assembler.feed("2\r\nhi\r\n0\r\n\r\n"), AssembleStatus::COMPLETE);
+    EXPECT_EQ(assembler.take_request().body, "hi");
+}
+
+TEST(RequestAssemblerTest, SemExpectNuncaPedeContinue) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhe"), AssembleStatus::NEED_MORE);
+    EXPECT_FALSE(assembler.take_continue());
+}
+
+TEST(RequestAssemblerTest, ExpectDesconhecidoDa417) {
+    RequestAssembler assembler;
+
+    ASSERT_EQ(assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: foo\r\n\r\n"),
+              AssembleStatus::ERROR);
+    EXPECT_EQ(assembler.error_status(), StatusCode::EXPECTATION_FAILED);
+}
+
+TEST(RequestAssemblerTest, CorpoGrandeDemaisComExpectDa413SemContinue) {
+    RequestAssembler assembler;
+
+    // o servidor ja sabe que vai recusar: nao deve convidar o cliente a enviar 2 MB
+    ASSERT_EQ(assembler.feed("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 2097152\r\nExpect: 100-continue\r\n\r\n"),
+              AssembleStatus::ERROR);
+    EXPECT_EQ(assembler.error_status(), StatusCode::PAYLOAD_TOO_LARGE);
+    EXPECT_FALSE(assembler.take_continue());
+}

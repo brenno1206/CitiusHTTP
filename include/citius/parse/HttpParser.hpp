@@ -14,6 +14,7 @@ enum class ParseError {
     BAD_REQUEST,           ///< 400: sintaxe invalida, Host ausente/duplicado, cabecalho malformado
     NOT_IMPLEMENTED,       ///< 501: metodo que o servidor nao conhece
     URI_TOO_LONG,          ///< 414: alvo maior que HttpParser::kMaxTargetLength
+    EXPECTATION_FAILED,    ///< 417: Expect com um valor que nao seja "100-continue"
     VERSION_NOT_SUPPORTED, ///< 505: versao bem formada, mas diferente de HTTP/1.0 e HTTP/1.1
     HEADERS_TOO_LARGE,     ///< 431: mais de HttpParser::kMaxHeaderCount cabecalhos
     PAYLOAD_TOO_LARGE      ///< 413: Content-Length maior que HttpParser::kMaxBodyLength

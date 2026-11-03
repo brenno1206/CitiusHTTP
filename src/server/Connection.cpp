@@ -94,7 +94,11 @@ void Connection::drive(Clock::time_point now, std::string_view bytes) {
     AssembleStatus status = m_assembler.feed(bytes);
 
     while (m_state == State::READING) {
-        if (status == AssembleStatus::NEED_MORE) return;
+        if (status == AssembleStatus::NEED_MORE) {
+            // o cliente pediu "Expect: 100-continue" e espera o aval antes de enviar o corpo
+            if (m_assembler.take_continue()) send_interim_continue();
+            return;
+        }
 
         if (status == AssembleStatus::ERROR) {
             // depois de um erro nao se sabe onde a proxima requisicao comeca: responde e fecha
@@ -182,6 +186,14 @@ void Connection::finish_write(Clock::time_point now) {
     }
     m_state = State::READING;
     m_deadline = now + (buffered ? m_options.read_timeout : m_options.idle_timeout);
+}
+
+void Connection::send_interim_continue() noexcept {
+    // Resposta interina (1xx): nao tem corpo nem Content-Length, entao nao passa pelo HttpResponse. Uma tentativa so:
+    // sao 25 bytes num buffer de envio vazio (a conexao esta em READING, sem nada pendente). Se falhar, o cliente
+    // espera ~1 s pelo 100 e envia o corpo mesmo assim (RFC 9110 10.1.1).
+    constexpr std::string_view kContinue = "HTTP/1.1 100 Continue\r\n\r\n";
+    (void)m_socket.send_some(kContinue);
 }
 
 void Connection::begin_lingering(Clock::time_point now) {

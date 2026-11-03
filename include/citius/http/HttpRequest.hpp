@@ -39,8 +39,11 @@ struct HttpRequest {
     std::string path;    ///< alvo da requisicao como veio, incluindo query string, ex.: "/busca?q=1"
     std::string version; ///< "HTTP/1.0" ou "HTTP/1.1"
     Headers headers;
-    std::size_t content_length = 0; ///< tamanho do corpo declarado em Content-Length (0 se ausente)
-    std::string body;               ///< corpo; o HttpParser nao o preenche, quem le o socket o faz
+    std::size_t content_length = 0; ///< tamanho do corpo declarado em Content-Length (0 se ausente ou se chunked)
+    bool chunked = false; ///< o corpo vem em "Transfer-Encoding: chunked": o tamanho so se sabe depois de decodifica-lo
+    bool expect_continue =
+        false;        ///< o cliente enviou "Expect: 100-continue" (so em HTTP/1.1) e espera o 100 antes do corpo
+    std::string body; ///< corpo; o HttpParser nao o preenche, quem le o socket o faz
 
     /// @return true se a conexao pode ser reaproveitada depois desta requisicao (RFC 9112, 9.3):
     ///         HTTP/1.1 e persistente, a menos que o cabecalho Connection tenha o token "close";

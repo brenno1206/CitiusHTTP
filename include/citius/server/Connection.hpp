@@ -140,6 +140,8 @@ private:
     void finish_write(Clock::time_point now);
     /// Manda o FIN e passa a esperar o cliente fechar; se nao der, fecha.
     void begin_lingering(Clock::time_point now);
+    /// Envia "HTTP/1.1 100 Continue" (resposta interina) quando o cliente pediu Expect: 100-continue.
+    void send_interim_continue() noexcept;
     void discard_input();
     void close() noexcept;
 

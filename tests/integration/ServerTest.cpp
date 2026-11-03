@@ -730,14 +730,78 @@ TEST(ServerTest, CorpoPrometidoMasNaoEnviadoDa408) {
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
 }
 
-TEST(ServerTest, TransferEncodingChunkedDa501) {
+TEST(ServerTest, TransferEncodingChunkedEDecodificado) {
     Server server{0, raiz_de_teste()};
     registrar_eco(server);
 
     std::string resposta = requisitar(
-        server, "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+        server,
+        "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nhello world")) << resposta;
+}
+
+TEST(ServerTest, ChunkedEnviadoEmPedacosLentos) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta =
+        requisitar(server, std::vector<std::string>{"POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Enc",
+                                                    "oding: chunked\r\n\r\n3\r\na", "bc\r\n3\r\ndef\r\n0", "\r\n\r\n"});
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nabcdef")) << resposta;
+}
+
+TEST(ServerTest, TransferEncodingGzipDa501) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\nlixo");
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 501 Not Implemented\r\n")) << resposta;
+}
+
+TEST(ServerTest, ChunkedMalformadoDa400) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    // LF sozinho no lugar do CRLF: a ambiguidade que o request smuggling explora
+    std::string resposta =
+        requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\nhello\r\n0\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 400 Bad Request\r\n")) << resposta;
+}
+
+TEST(ServerTest, Expect100ContinueRecebeOInterinoEDepoisAResposta) {
+    ServidorEmExecucao exec;
+    registrar_eco(exec.server);
+    Socket cliente = conectar(exec.server.port());
+    std::array<char, 4096> buffer;
+
+    // como o curl: manda so a cabeca e ESPERA o 100 antes de enviar o corpo
+    ASSERT_TRUE(cliente.send_all("POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"));
+    ssize_t n = cliente.recv_some(buffer);
+    ASSERT_GT(n, 0);
+    EXPECT_EQ(std::string(buffer.data(), static_cast<std::size_t>(n)), "HTTP/1.1 100 Continue\r\n\r\n");
+
+    ASSERT_TRUE(cliente.send_all("hello"));
+    n = cliente.recv_some(buffer);
+    ASSERT_GT(n, 0);
+    const std::string resposta(buffer.data(), static_cast<std::size_t>(n));
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_TRUE(resposta.ends_with("\r\n\r\nhello")) << resposta;
+}
+
+TEST(ServerTest, ExpectDesconhecidoDa417) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta =
+        requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 200-ok\r\n\r\nhello");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 417 Expectation Failed\r\n")) << resposta;
 }
 
 TEST(ServerTest, TransferEncodingMaisContentLengthDa400) {

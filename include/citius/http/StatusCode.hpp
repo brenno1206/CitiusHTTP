@@ -13,6 +13,7 @@ enum class StatusCode {
     REQUEST_TIMEOUT = 408,
     PAYLOAD_TOO_LARGE = 413,
     URI_TOO_LONG = 414,
+    EXPECTATION_FAILED = 417,
     HEADERS_TOO_LARGE = 431,
     INTERNAL_SERVER_ERROR = 500,
     NOT_IMPLEMENTED = 501,
@@ -39,6 +40,8 @@ enum class StatusCode {
         return "Content Too Large";
     case StatusCode::URI_TOO_LONG:
         return "URI Too Long";
+    case StatusCode::EXPECTATION_FAILED:
+        return "Expectation Failed";
     case StatusCode::HEADERS_TOO_LARGE:
         return "Request Header Fields Too Large";
     case StatusCode::INTERNAL_SERVER_ERROR:

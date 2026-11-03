@@ -1,6 +1,7 @@
 #pragma once
 #include "citius/http/HttpRequest.hpp"
 #include "citius/http/StatusCode.hpp"
+#include "citius/parse/ChunkedDecoder.hpp"
 #include "citius/parse/HttpParser.hpp"
 #include <cstddef>
 #include <optional>
@@ -51,17 +52,29 @@ public:
     /// @throws std::logic_error se não houve erro.
     [[nodiscard]] StatusCode error_status() const;
 
+    /// @return true UMA vez se o cliente mandou "Expect: 100-continue", a cabeça foi aceita e o corpo ainda não chegou:
+    ///         o chamador deve enviar "HTTP/1.1 100 Continue" para o cliente começar a enviar o corpo (RFC
+    ///         9110 10.1.1). Nunca é true se o corpo já chegou junto com a cabeça, se não há corpo, ou se a cabeça foi
+    ///         recusada (413, 417...): não se convida o cliente a enviar o que vai ser recusado.
+    [[nodiscard]] bool take_continue() noexcept;
+
     /// @return true se há bytes guardados (requisição pela metade ou sobra da próxima). Serve para
     ///         distinguir uma conexão ociosa (nada guardado: fechar em silêncio) de uma requisição
     ///         parada no meio (responder 408).
     [[nodiscard]] bool has_buffered_data() const noexcept {
-        return !m_buffer.empty() || m_state == State::BODY;
+        return !m_buffer.empty() || m_state == State::BODY || m_state == State::CHUNKED_BODY;
     }
 
 private:
-    enum class State { HEAD, BODY, DONE, FAILED };
+    enum class State { HEAD, BODY, CHUNKED_BODY, DONE, FAILED };
 
     AssembleStatus advance();
+    /// Procura e interpreta a cabeca. @return o resultado se ela ainda nao esta completa ou e invalida; std::nullopt se
+    /// foi aceita (o estado passa a BODY ou CHUNKED_BODY).
+    std::optional<AssembleStatus> advance_head();
+    AssembleStatus advance_chunked_body();
+    AssembleStatus advance_fixed_body();
+    AssembleStatus complete();
     AssembleStatus fail(StatusCode status);
 
     std::size_t m_max_head_bytes;
@@ -69,6 +82,8 @@ private:
     std::string m_buffer;          ///< bytes recebidos e ainda não consumidos (na fase BODY, só o corpo)
     std::size_t m_search_from = 0; ///< onde retomar a busca por "\r\n\r\n" (ele pode vir partido)
     HttpRequest m_request;         ///< cabeça já interpretada, enquanto o corpo chega
+    ChunkedDecoder m_decoder{HttpParser::kMaxBodyLength}; ///< só usado quando o corpo é "chunked"
+    bool m_continue_pending = false; ///< a cabeça pediu "Expect: 100-continue" e o chamador ainda não foi avisado
     std::optional<StatusCode> m_error;
 };
 

@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace citius {
 
@@ -118,6 +119,47 @@ std::optional<ParseError> parse_header_line(std::string_view line, HttpRequest::
     return std::nullopt;
 }
 
+// Transfer-Encoding (RFC 9112, secoes 6.1 e 6.3). So "chunked" sozinho e suportado. Esta e uma fronteira de seguranca
+// (request smuggling: dois servidores em fila discordando de onde a mensagem termina), entao qualquer ambiguidade e
+// 400:
+//   - junto com Content-Length (o caso classico CL.TE / TE.CL);
+//   - em HTTP/1.0 (nao existe la);
+//   - lista com item vazio, "chunked" repetido, ou "chunked" que nao e o ultimo.
+// Outras codificacoes que nao conhecemos (gzip, identity...) sao 501.
+std::optional<ParseError> parse_transfer_encoding(HttpRequest& request) {
+    auto const it = request.headers.find("transfer-encoding");
+    if (it == request.headers.end()) return std::nullopt;
+    if (request.version == "HTTP/1.0" || request.headers.contains("content-length")) return ParseError::BAD_REQUEST;
+
+    std::vector<std::string> codings;
+    std::string_view rest = it->second;
+    while (true) {
+        const std::size_t comma = rest.find(',');
+        codings.push_back(to_lower_ascii(trim_ows(rest.substr(0, comma))));
+        if (comma == std::string_view::npos) break;
+        rest.remove_prefix(comma + 1);
+    }
+
+    if (std::ranges::any_of(codings, [](const std::string& c) { return c.empty(); })) return ParseError::BAD_REQUEST;
+    const auto chunked_count = static_cast<std::size_t>(std::ranges::count(codings, "chunked"));
+    if (chunked_count > 1) return ParseError::BAD_REQUEST;
+    if (chunked_count == 1 && codings.back() != "chunked") return ParseError::BAD_REQUEST;
+    if (codings.size() == 1 && chunked_count == 1) {
+        request.chunked = true;
+        return std::nullopt;
+    }
+    return ParseError::NOT_IMPLEMENTED;
+}
+
+// Expect (RFC 9110, secao 10.1.1). So "100-continue" e conhecido; outro valor e 417. Em HTTP/1.0 o servidor o ignora.
+std::optional<ParseError> parse_expect(HttpRequest& request) {
+    auto const it = request.headers.find("expect");
+    if (it == request.headers.end() || request.version == "HTTP/1.0") return std::nullopt;
+    if (!iequals(trim_ows(it->second), "100-continue")) return ParseError::EXPECTATION_FAILED;
+    request.expect_continue = true;
+    return std::nullopt;
+}
+
 // Content-Length = 1*DIGIT (RFC 9110, secao 8.6). Valores repetidos chegam juntados com ", " e
 // por isso caem na regra "so digitos".
 std::optional<ParseError> parse_content_length(const HttpRequest::Headers& headers, std::size_t& length) {
@@ -149,6 +191,8 @@ StatusCode to_status(ParseError error) noexcept {
         return StatusCode::NOT_IMPLEMENTED;
     case ParseError::URI_TOO_LONG:
         return StatusCode::URI_TOO_LONG;
+    case ParseError::EXPECTATION_FAILED:
+        return StatusCode::EXPECTATION_FAILED;
     case ParseError::VERSION_NOT_SUPPORTED:
         return StatusCode::VERSION_NOT_SUPPORTED;
     case ParseError::HEADERS_TOO_LARGE:
@@ -190,16 +234,13 @@ ParseResult HttpParser::parse(std::string_view raw_head) {
     if (request.version == "HTTP/1.1" && host_count != 1) {
         return ParseResult::failure(ParseError::BAD_REQUEST);
     }
-    // Transfer-Encoding (chunked) nao e suportado. Com Content-Length junto, dois servidores em fila
-    // podem discordar de onde a mensagem termina (request smuggling): a RFC 9112 (6.1) manda tratar
-    // como erro. Sozinho e so uma funcionalidade que nao temos: 501.
-    if (request.headers.contains("transfer-encoding")) {
-        return ParseResult::failure(request.headers.contains("content-length") ? ParseError::BAD_REQUEST
-                                                                               : ParseError::NOT_IMPLEMENTED);
+    if (auto error = parse_transfer_encoding(request)) return ParseResult::failure(*error);
+    if (!request.chunked) {
+        if (auto error = parse_content_length(request.headers, request.content_length)) {
+            return ParseResult::failure(*error);
+        }
     }
-    if (auto error = parse_content_length(request.headers, request.content_length)) {
-        return ParseResult::failure(*error);
-    }
+    if (auto error = parse_expect(request)) return ParseResult::failure(*error);
     return ParseResult::success(std::move(request));
 }
 

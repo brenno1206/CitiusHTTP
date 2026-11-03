@@ -1,5 +1,6 @@
 #include "citius/parse/ChunkedDecoder.hpp"
 #include "citius/http/HttpSyntax.hpp"
+#include "citius/parse/HttpParser.hpp"
 #include "citius/util/AsciiText.hpp"
 #include <algorithm>
 #include <cstddef>

@@ -600,3 +600,137 @@ TEST(ConnectionTest, FimPorOciosidadeFechaDeUmaVezSemLingering) {
 
     EXPECT_TRUE(f.conn->closed());
 }
+
+// ---- corpo chunked e Expect: 100-continue -----------------------------------------------------------------------
+
+TEST(ConnectionTest, ChunkedChegaAoHandlerDecodificado) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+
+    f.conn->on_readable(f.t0);
+
+    ASSERT_EQ(f.seen.size(), 1u);
+    EXPECT_EQ(f.seen[0].body, "hello");
+    EXPECT_EQ(f.seen[0].content_length, 5u);
+    EXPECT_TRUE(contains(drain(f.peer), "200 OK"));
+}
+
+TEST(ConnectionTest, ChunkedChegandoAosPoucosEPipelining) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab");
+    f.conn->on_readable(f.t0);
+    EXPECT_TRUE(f.seen.empty());
+
+    f.send("c\r\n0\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n"); // o resto do corpo e ja a proxima requisicao
+    f.conn->on_readable(f.t0);
+
+    ASSERT_EQ(f.seen.size(), 2u);
+    EXPECT_EQ(f.seen[0].body, "abc");
+    EXPECT_EQ(f.seen[1].path, "/b");
+    EXPECT_EQ(count(drain(f.peer), "HTTP/1.1 200 OK"), 2u);
+}
+
+TEST(ConnectionTest, ChunkedInvalidoDa400EFecha) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n");
+
+    f.conn->on_readable(f.t0);
+
+    EXPECT_TRUE(contains(drain(f.peer), "400"));
+    EXPECT_TRUE(f.seen.empty());
+    EXPECT_TRUE(f.conn->lingering());
+}
+
+TEST(ConnectionTest, ChunkedIncompletoEstouraOPrazoDa408) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel");
+    f.conn->on_readable(f.t0);
+
+    f.conn->check_deadline(f.t0 + 1000ms);
+
+    EXPECT_TRUE(contains(drain(f.peer), "408"));
+    EXPECT_TRUE(f.seen.empty());
+}
+
+TEST(ConnectionTest, Expect100ContinueRecebeOInterinoAntesDoCorpo) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n");
+
+    f.conn->on_readable(f.t0);
+
+    // so o interino: o handler ainda nao foi chamado e nao ha resposta final
+    EXPECT_EQ(drain(f.peer), "HTTP/1.1 100 Continue\r\n\r\n");
+    EXPECT_TRUE(f.seen.empty());
+    EXPECT_FALSE(f.conn->closed());
+
+    f.send("hello");
+    f.conn->on_readable(f.t0);
+
+    const std::string response = drain(f.peer);
+    EXPECT_TRUE(contains(response, "200 OK"));
+    EXPECT_FALSE(contains(response, "100 Continue")); // o interino sai uma vez so
+    ASSERT_EQ(f.seen.size(), 1u);
+    EXPECT_EQ(f.seen[0].body, "hello");
+}
+
+TEST(ConnectionTest, Expect100ContinueUmaVezSoMesmoComCorpoEmPedacos) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\nExpect: 100-continue\r\n\r\n");
+    f.conn->on_readable(f.t0);
+    ASSERT_EQ(drain(f.peer), "HTTP/1.1 100 Continue\r\n\r\n");
+
+    f.send("abc");
+    f.conn->on_readable(f.t0);
+    EXPECT_EQ(drain(f.peer), "");
+    f.send("def");
+    f.conn->on_readable(f.t0);
+
+    EXPECT_TRUE(contains(drain(f.peer), "200 OK"));
+}
+
+TEST(ConnectionTest, ExpectComCorpoJaPresenteNaoManda100) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello");
+
+    f.conn->on_readable(f.t0);
+
+    const std::string response = drain(f.peer);
+    EXPECT_TRUE(contains(response, "200 OK"));
+    EXPECT_FALSE(contains(response, "100 Continue"));
+}
+
+TEST(ConnectionTest, ExpectComChunkedTambemRecebeOInterino) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n");
+    f.conn->on_readable(f.t0);
+    EXPECT_EQ(drain(f.peer), "HTTP/1.1 100 Continue\r\n\r\n");
+
+    f.send("2\r\nhi\r\n0\r\n\r\n");
+    f.conn->on_readable(f.t0);
+
+    ASSERT_EQ(f.seen.size(), 1u);
+    EXPECT_EQ(f.seen[0].body, "hi");
+}
+
+TEST(ConnectionTest, ExpectDesconhecidoDa417EFecha) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: algo-estranho\r\n\r\n");
+
+    f.conn->on_readable(f.t0);
+
+    const std::string response = drain(f.peer);
+    EXPECT_TRUE(contains(response, "417 Expectation Failed"));
+    EXPECT_FALSE(contains(response, "100 Continue"));
+    EXPECT_TRUE(f.conn->lingering());
+}
+
+TEST(ConnectionTest, CorpoGrandeDemaisComExpectDa413SemInterino) {
+    Fixture f;
+    f.send("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 2097152\r\nExpect: 100-continue\r\n\r\n");
+
+    f.conn->on_readable(f.t0);
+
+    const std::string response = drain(f.peer);
+    EXPECT_TRUE(contains(response, "413"));
+    EXPECT_FALSE(contains(response, "100 Continue")); // nao convida o cliente a enviar o que vai ser recusado
+}
