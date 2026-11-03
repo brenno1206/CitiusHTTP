@@ -1,8 +1,11 @@
 #include "citius/net/Poller.hpp"
 #include <array>
 #include <cerrno>
+#include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <sys/epoll.h>
+#include <vector>
 
 namespace citius {
 
