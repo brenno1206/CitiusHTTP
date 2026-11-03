@@ -9,22 +9,21 @@
 namespace citius {
 
 /// Metodos HTTP reconhecidos. UNKNOWN indica metodo nao suportado.
-enum class HttpMethod {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    UNKNOWN
-};
+enum class HttpMethod { GET, POST, PUT, DELETE, UNKNOWN };
 
 /// @return o nome do metodo como aparece na requisicao ("GET"), ou "?" para UNKNOWN.
 [[nodiscard]] constexpr std::string_view method_name(HttpMethod method) noexcept {
     switch (method) {
-        case HttpMethod::GET: return "GET";
-        case HttpMethod::POST: return "POST";
-        case HttpMethod::PUT: return "PUT";
-        case HttpMethod::DELETE: return "DELETE";
-        case HttpMethod::UNKNOWN: break;
+    case HttpMethod::GET:
+        return "GET";
+    case HttpMethod::POST:
+        return "POST";
+    case HttpMethod::PUT:
+        return "PUT";
+    case HttpMethod::DELETE:
+        return "DELETE";
+    case HttpMethod::UNKNOWN:
+        break;
     }
     return "?";
 }
@@ -49,7 +48,8 @@ struct HttpRequest {
     [[nodiscard]] bool keep_alive() const {
         const bool persistent_by_default = version == "HTTP/1.1";
         auto it = headers.find("connection");
-        if (it == headers.end()) return persistent_by_default;
+        if (it == headers.end())
+            return persistent_by_default;
 
         bool has_close = false;
         bool has_keep_alive = false;
@@ -58,12 +58,15 @@ struct HttpRequest {
             std::size_t comma = list.find(',');
             std::string_view token = list.substr(0, comma);
             list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
-            while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) token.remove_prefix(1);
-            while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) token.remove_suffix(1);
+            while (!token.empty() && (token.front() == ' ' || token.front() == '\t'))
+                token.remove_prefix(1);
+            while (!token.empty() && (token.back() == ' ' || token.back() == '\t'))
+                token.remove_suffix(1);
             has_close = has_close || iequals(token, "close");
             has_keep_alive = has_keep_alive || iequals(token, "keep-alive");
         }
-        if (has_close) return false;
+        if (has_close)
+            return false;
         return has_keep_alive || persistent_by_default;
     }
 };

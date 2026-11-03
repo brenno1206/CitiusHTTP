@@ -1,5 +1,5 @@
-#include "citius/HttpParser.hpp"
 #include "citius/HttpResponse.hpp"
+#include "citius/HttpParser.hpp"
 #include "citius/StatusCode.hpp"
 #include <gtest/gtest.h>
 #include <string>
@@ -39,7 +39,7 @@ TEST(StatusCodeTest, ParseErrorViraOStatusCorreto) {
 // ---- HttpResponse ----
 
 TEST(HttpResponseTest, RespostaVaziaTemContentLengthZero) {
-    HttpResponse response;  // 200 por padrao
+    HttpResponse response; // 200 por padrao
 
     EXPECT_EQ(response.serialize(), "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 }
@@ -48,17 +48,16 @@ TEST(HttpResponseTest, ContentLengthSaiDoCorpo) {
     HttpResponse response{StatusCode::OK};
     response.set_body("Hello Citius!", "text/plain");
 
-    EXPECT_EQ(response.serialize(),
-              "HTTP/1.1 200 OK\r\n"
-              "Content-Type: text/plain\r\n"
-              "Content-Length: 13\r\n"
-              "\r\n"
-              "Hello Citius!");
+    EXPECT_EQ(response.serialize(), "HTTP/1.1 200 OK\r\n"
+                                    "Content-Type: text/plain\r\n"
+                                    "Content-Length: 13\r\n"
+                                    "\r\n"
+                                    "Hello Citius!");
 }
 
 TEST(HttpResponseTest, ContentLengthContaBytesENaoCaracteres) {
     HttpResponse response;
-    response.set_body("ol\xc3\xa1");  // "olá" em UTF-8: 3 caracteres, 4 bytes
+    response.set_body("ol\xc3\xa1"); // "olá" em UTF-8: 3 caracteres, 4 bytes
 
     EXPECT_NE(response.serialize().find("Content-Length: 4\r\n"), std::string::npos);
 }
@@ -138,11 +137,10 @@ TEST(HttpResponseTest, AceitaValorVazioEComHtab) {
 TEST(HttpResponseTest, MakeErrorMontaCorpoEmTextoComTamanhoCerto) {
     HttpResponse response = HttpResponse::make_error(StatusCode::NOT_FOUND);
 
-    EXPECT_EQ(response.serialize(),
-              "HTTP/1.1 404 Not Found\r\n"
-              "Content-Type: text/plain; charset=utf-8\r\n"
-              "Connection: close\r\n"
-              "Content-Length: 14\r\n"
-              "\r\n"
-              "404 Not Found\n");
+    EXPECT_EQ(response.serialize(), "HTTP/1.1 404 Not Found\r\n"
+                                    "Content-Type: text/plain; charset=utf-8\r\n"
+                                    "Connection: close\r\n"
+                                    "Content-Length: 14\r\n"
+                                    "\r\n"
+                                    "404 Not Found\n");
 }

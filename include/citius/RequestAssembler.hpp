@@ -54,7 +54,9 @@ public:
     /// @return true se há bytes guardados (requisição pela metade ou sobra da próxima). Serve para
     ///         distinguir uma conexão ociosa (nada guardado: fechar em silêncio) de uma requisição
     ///         parada no meio (responder 408).
-    [[nodiscard]] bool has_buffered_data() const noexcept { return !m_buffer.empty() || m_state == State::BODY; }
+    [[nodiscard]] bool has_buffered_data() const noexcept {
+        return !m_buffer.empty() || m_state == State::BODY;
+    }
 
 private:
     enum class State { HEAD, BODY, DONE, FAILED };
@@ -64,9 +66,9 @@ private:
 
     std::size_t m_max_head_bytes;
     State m_state = State::HEAD;
-    std::string m_buffer;           ///< bytes recebidos e ainda não consumidos (na fase BODY, só o corpo)
-    std::size_t m_search_from = 0;  ///< onde retomar a busca por "\r\n\r\n" (ele pode vir partido)
-    HttpRequest m_request;          ///< cabeça já interpretada, enquanto o corpo chega
+    std::string m_buffer;          ///< bytes recebidos e ainda não consumidos (na fase BODY, só o corpo)
+    std::size_t m_search_from = 0; ///< onde retomar a busca por "\r\n\r\n" (ele pode vir partido)
+    HttpRequest m_request;         ///< cabeça já interpretada, enquanto o corpo chega
     std::optional<StatusCode> m_error;
 };
 

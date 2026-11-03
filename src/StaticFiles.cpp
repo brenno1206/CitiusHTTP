@@ -9,8 +9,7 @@
 
 namespace citius {
 
-HttpResponse serve_static(const std::filesystem::path& root, const HttpRequest& request,
-                          std::size_t max_file_bytes) {
+HttpResponse serve_static(const std::filesystem::path& root, const HttpRequest& request, std::size_t max_file_bytes) {
     namespace fs = std::filesystem;
 
     if (request.method != HttpMethod::GET) {

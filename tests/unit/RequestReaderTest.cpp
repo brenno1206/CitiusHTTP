@@ -3,15 +3,15 @@
 #include <chrono>
 #include <gtest/gtest.h>
 #include <string>
-#include <vector>
 #include <sys/socket.h>
 #include <thread>
 #include <utility>
+#include <vector>
 
-using citius::ReadStatus;
-using citius::Socket;
 using citius::read_request_body;
 using citius::read_request_head;
+using citius::ReadStatus;
+using citius::Socket;
 
 namespace {
 
@@ -87,7 +87,7 @@ TEST(RequestReaderTest, MantemBytesQueChegaramAposOsCabecalhos) {
 
 TEST(RequestReaderTest, RejeitaCabecalhosMaioresQueOLimite) {
     auto par = novo_par();
-    ASSERT_TRUE(par.cliente.send_all(std::string(200, 'A')));  // nunca envia \r\n\r\n
+    ASSERT_TRUE(par.cliente.send_all(std::string(200, 'A'))); // nunca envia \r\n\r\n
 
     auto resultado = read_request_head(par.servidor, 64);
 
@@ -121,7 +121,7 @@ TEST(RequestReaderTest, SocketInvalidoDaErro) {
 }
 
 TEST(RequestReaderTest, ClienteMudoDaTimeout) {
-    auto par = novo_par();  // 'cliente' fica aberto e nao envia nada
+    auto par = novo_par(); // 'cliente' fica aberto e nao envia nada
     ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
 
     auto resultado = read_request_head(par.servidor, kLimite);
@@ -152,7 +152,7 @@ TEST(RequestReaderTest, InformaOndeTerminaACabeca) {
 }
 
 TEST(RequestReaderTest, CorpoJaRecebidoJuntoComACabecaNaoLeDoSocket) {
-    auto par = novo_par();  // nada sera enviado: se tentasse ler, daria timeout
+    auto par = novo_par(); // nada sera enviado: se tentasse ler, daria timeout
     ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
 
     auto resultado = read_request_body(par.servidor, "abcde", 5);
@@ -174,7 +174,7 @@ TEST(RequestReaderTest, CompletaCorpoQueChegaAosPedacos) {
 
 TEST(RequestReaderTest, CorpoNaoPassaDoContentLength) {
     auto par = novo_par();
-    ASSERT_TRUE(par.cliente.send_all("cdefXXXX"));  // sobra: seria a proxima requisicao
+    ASSERT_TRUE(par.cliente.send_all("cdefXXXX")); // sobra: seria a proxima requisicao
 
     auto resultado = read_request_body(par.servidor, "ab", 6);
 
@@ -201,7 +201,7 @@ TEST(RequestReaderTest, CorpoParadoDaTimeout) {
 // ---- sobra de uma requisicao para a proxima (keep-alive) ----
 
 TEST(RequestReaderTest, CabecaCompletaEmInitialNaoLeDoSocket) {
-    auto par = novo_par();  // mudo: ler do socket daria timeout
+    auto par = novo_par(); // mudo: ler do socket daria timeout
     ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
 
     auto resultado = read_request_head(par.servidor, kLimite, "GET / HTTP/1.1\r\nHost: x\r\n\r\nSOBRA");

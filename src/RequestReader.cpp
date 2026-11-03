@@ -1,8 +1,8 @@
 #include "citius/RequestReader.hpp"
 #include <algorithm>
 #include <array>
-#include <span>
 #include <cerrno>
+#include <span>
 #include <string_view>
 
 namespace citius {
@@ -15,7 +15,7 @@ constexpr std::string_view kHeadEnd = "\r\n\r\n";
 ReadStatus failure_status() {
     return errno == EAGAIN || errno == EWOULDBLOCK ? ReadStatus::TIMEOUT : ReadStatus::ERROR;
 }
-}
+} // namespace
 
 ReadResult read_request_head(Socket& socket, std::size_t max_bytes, std::string_view initial) {
     ReadResult result;

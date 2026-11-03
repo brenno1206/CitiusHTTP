@@ -22,17 +22,22 @@ std::string timestamp() {
 
 std::string_view level_name(LogLevel level) noexcept {
     switch (level) {
-        case LogLevel::DEBUG: return "DEBUG";
-        case LogLevel::INFO: return "INFO";
-        case LogLevel::WARN: return "WARN";
-        case LogLevel::ERROR: return "ERROR";
+    case LogLevel::DEBUG:
+        return "DEBUG";
+    case LogLevel::INFO:
+        return "INFO";
+    case LogLevel::WARN:
+        return "WARN";
+    case LogLevel::ERROR:
+        return "ERROR";
     }
     return "?";
 }
 
 std::optional<LogLevel> parse_log_level(std::string_view name) {
     for (LogLevel level : {LogLevel::DEBUG, LogLevel::INFO, LogLevel::WARN, LogLevel::ERROR}) {
-        if (iequals(name, level_name(level))) return level;
+        if (iequals(name, level_name(level)))
+            return level;
     }
     return std::nullopt;
 }
@@ -46,7 +51,8 @@ Logger& Logger::instance() {
 }
 
 void Logger::log(LogLevel level, std::string_view message) {
-    if (!enabled(level)) return;
+    if (!enabled(level))
+        return;
 
     std::string line = timestamp();
     line += " [";
@@ -65,9 +71,17 @@ void Logger::log(LogLevel level, std::string_view message) {
     stream << line << std::flush;
 }
 
-void log_debug(std::string_view message) { Logger::instance().log(LogLevel::DEBUG, message); }
-void log_info(std::string_view message) { Logger::instance().log(LogLevel::INFO, message); }
-void log_warn(std::string_view message) { Logger::instance().log(LogLevel::WARN, message); }
-void log_error(std::string_view message) { Logger::instance().log(LogLevel::ERROR, message); }
+void log_debug(std::string_view message) {
+    Logger::instance().log(LogLevel::DEBUG, message);
+}
+void log_info(std::string_view message) {
+    Logger::instance().log(LogLevel::INFO, message);
+}
+void log_warn(std::string_view message) {
+    Logger::instance().log(LogLevel::WARN, message);
+}
+void log_error(std::string_view message) {
+    Logger::instance().log(LogLevel::ERROR, message);
+}
 
 } // namespace citius

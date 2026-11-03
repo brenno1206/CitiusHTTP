@@ -43,8 +43,8 @@ public:
 private:
     void worker_loop();
 
-    std::mutex m_mutex;                  ///< protege m_queue e m_stopping
-    std::condition_variable m_wake;      ///< acorda um worker quando chega tarefa ou o pool encerra
+    std::mutex m_mutex;             ///< protege m_queue e m_stopping
+    std::condition_variable m_wake; ///< acorda um worker quando chega tarefa ou o pool encerra
     std::queue<Task> m_queue;
     std::size_t m_max_queue;
     bool m_stopping = false;

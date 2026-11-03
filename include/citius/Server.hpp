@@ -39,12 +39,16 @@ public:
                     std::size_t max_connections = kDefaultMaxConnections);
 
     /// @return a porta em que o servidor realmente escuta.
-    [[nodiscard]] std::uint16_t port() const noexcept { return m_port; }
+    [[nodiscard]] std::uint16_t port() const noexcept {
+        return m_port;
+    }
 
     /// Roteador das requisicoes. Caminhos sem rota caem nos arquivos estaticos de @c root.
     /// Registre as rotas antes de chamar run()/serve_one() (o Router nao e thread-safe para escrita).
     /// Um handler que lance excecao vira resposta 500; o servidor continua de pe.
-    [[nodiscard]] Router& router() noexcept { return m_router; }
+    [[nodiscard]] Router& router() noexcept {
+        return m_router;
+    }
 
     /// Define em quanto tempo uma requisicao deve chegar inteira (cabecalhos e corpo); estourou, o
     /// cliente recebe 408 e a conexao fecha. O prazo e da requisicao toda, nao de cada leitura. Vale
@@ -70,7 +74,9 @@ public:
 
     /// Pede para run()/serve_one() pararem. Pode ser chamado de outra thread ou de um handler de
     /// sinal (so grava um std::atomic lock-free). A parada leva ate ~50 ms para ser notada.
-    void request_stop() noexcept { m_stop.store(true); }
+    void request_stop() noexcept {
+        m_stop.store(true);
+    }
 
 private:
     void start(std::uint16_t port);

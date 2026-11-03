@@ -42,13 +42,19 @@ public:
     [[nodiscard]] static Logger& instance();
 
     /// Muda o nivel minimo; pode ser chamado de qualquer thread, vale a partir da proxima mensagem.
-    void set_level(LogLevel level) noexcept { m_level.store(level); }
+    void set_level(LogLevel level) noexcept {
+        m_level.store(level);
+    }
 
-    [[nodiscard]] LogLevel level() const noexcept { return m_level.load(); }
+    [[nodiscard]] LogLevel level() const noexcept {
+        return m_level.load();
+    }
 
     /// @return true se uma mensagem de @p level seria escrita. Use para pular um trabalho caro de
     ///         montar a mensagem (ex.: std::format) quando ela seria descartada.
-    [[nodiscard]] bool enabled(LogLevel level) const noexcept { return level >= m_level.load(); }
+    [[nodiscard]] bool enabled(LogLevel level) const noexcept {
+        return level >= m_level.load();
+    }
 
     /// Escreve @p message no nivel @p level, se habilitado. Caracteres de controle (exceto TAB)
     /// viram '?': um valor vindo do cliente com "\n" nao pode forjar uma linha de log falsa.

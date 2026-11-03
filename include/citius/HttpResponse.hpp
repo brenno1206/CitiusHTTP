@@ -18,8 +18,12 @@ public:
     /// Resposta de erro pronta: corpo em texto ("404 Not Found\n") e "Connection: close".
     [[nodiscard]] static HttpResponse make_error(StatusCode status);
 
-    [[nodiscard]] StatusCode status() const noexcept { return m_status; }
-    void set_status(StatusCode status) noexcept { m_status = status; }
+    [[nodiscard]] StatusCode status() const noexcept {
+        return m_status;
+    }
+    void set_status(StatusCode status) noexcept {
+        m_status = status;
+    }
 
     /// Define um cabecalho, substituindo o anterior de mesmo nome (sem diferenciar maiusculas).
     /// Os cabecalhos saem na ordem em que foram inseridos pela primeira vez.

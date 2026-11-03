@@ -29,11 +29,8 @@ HttpResponse close_with(StatusCode status) {
 } // namespace
 
 Connection::Connection(Socket socket, Handler handler, Clock::time_point now, ConnectionOptions options)
-    : m_socket(std::move(socket)),
-      m_handler(std::move(handler)),
-      m_options(options),
-      m_assembler(options.max_head_bytes),
-      m_deadline(now + options.read_timeout) {
+    : m_socket(std::move(socket)), m_handler(std::move(handler)), m_options(options),
+      m_assembler(options.max_head_bytes), m_deadline(now + options.read_timeout) {
     if (!m_socket.valid()) {
         m_state = State::CLOSED;
         return;
@@ -46,7 +43,8 @@ Connection::Connection(Socket socket, Handler handler, Clock::time_point now, Co
 }
 
 std::optional<Connection::Clock::time_point> Connection::deadline() const noexcept {
-    if (closed()) return std::nullopt;
+    if (closed())
+        return std::nullopt;
     return m_deadline;
 }
 
@@ -57,19 +55,22 @@ void Connection::close() noexcept {
 }
 
 void Connection::on_readable(Clock::time_point now) {
-    if (m_state != State::READING) return;
+    if (m_state != State::READING)
+        return;
 
     std::array<char, kReadChunk> buffer;
     const ssize_t received = m_socket.recv_some(buffer);
     if (received < 0) {
-        if (would_block()) return; // nada ainda (evento atrasado): espera o proximo aviso
+        if (would_block())
+            return; // nada ainda (evento atrasado): espera o proximo aviso
         log_debug("(erro de leitura)");
         close();
         return;
     }
     if (received == 0) {
         // fim normal de uma conexao keep-alive: o cliente terminou e fechou
-        if (m_assembler.has_buffered_data()) log_debug("(conexao encerrada antes de completar a requisicao)");
+        if (m_assembler.has_buffered_data())
+            log_debug("(conexao encerrada antes de completar a requisicao)");
         close();
         return;
     }
@@ -85,7 +86,8 @@ void Connection::drive(Clock::time_point now, std::string_view bytes) {
     AssembleStatus status = m_assembler.feed(bytes);
 
     while (m_state == State::READING) {
-        if (status == AssembleStatus::NEED_MORE) return;
+        if (status == AssembleStatus::NEED_MORE)
+            return;
 
         if (status == AssembleStatus::ERROR) {
             // depois de um erro nao se sabe onde a proxima requisicao comeca: responde e fecha
@@ -107,7 +109,8 @@ void Connection::drive(Clock::time_point now, std::string_view bytes) {
         HttpResponse response = respond_safely(request);
         // a RFC pede que o servidor avise quando vai fechar; "keep-alive" explicito tambem serve ao HTTP/1.0
         (void)response.set_header("Connection", keep_alive ? "keep-alive" : "close");
-        log_debug(std::format("{} {} -> {}", method_name(request.method), request.path, static_cast<int>(response.status())));
+        log_debug(
+            std::format("{} {} -> {}", method_name(request.method), request.path, static_cast<int>(response.status())));
 
         // se a resposta nao couber de uma vez, o estado vira WRITING e o laco para: a proxima
         // requisicao (ja guardada, se encadeada) espera a resposta sair
@@ -134,21 +137,24 @@ void Connection::begin_response(const HttpResponse& response, bool keep_alive, C
     m_close_after_write = !keep_alive;
     m_state = State::WRITING;
     m_deadline = now + m_options.write_timeout;
-    if (flush()) finish_write(now);
+    if (flush())
+        finish_write(now);
 }
 
 bool Connection::flush() {
     while (m_out_pos < m_out.size()) {
         const ssize_t sent = m_socket.send_some(std::string_view{m_out}.substr(m_out_pos));
         if (sent < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR)
+                continue;
             if (!would_block()) {
                 log_debug("Falha ao enviar resposta.");
                 close();
             }
             return false;
         }
-        if (sent == 0) return false; // nao deveria ocorrer com dados a enviar; o proximo aviso tenta de novo
+        if (sent == 0)
+            return false; // nao deveria ocorrer com dados a enviar; o proximo aviso tenta de novo
         m_out_pos += static_cast<std::size_t>(sent);
     }
     if (m_out.capacity() > kKeepOutputCapacity) {
@@ -171,15 +177,18 @@ void Connection::finish_write(Clock::time_point now) {
 }
 
 void Connection::on_writable(Clock::time_point now) {
-    if (m_state != State::WRITING) return;
+    if (m_state != State::WRITING)
+        return;
     if (flush()) {
         finish_write(now);
-        if (m_state == State::READING) drive(now, {}); // o cliente pode ter encadeado requisicoes
+        if (m_state == State::READING)
+            drive(now, {}); // o cliente pode ter encadeado requisicoes
     }
 }
 
 void Connection::check_deadline(Clock::time_point now) {
-    if (closed() || now < m_deadline) return;
+    if (closed() || now < m_deadline)
+        return;
 
     if (m_state == State::WRITING) {
         log_debug("(cliente nao leu a resposta a tempo)");
@@ -198,9 +207,11 @@ void Connection::check_deadline(Clock::time_point now) {
 }
 
 void Connection::close_when_idle() {
-    if (closed()) return;
+    if (closed())
+        return;
     m_draining = true;
-    if (m_state == State::READING && !m_assembler.has_buffered_data()) close();
+    if (m_state == State::READING && !m_assembler.has_buffered_data())
+        close();
 }
 
 } // namespace citius

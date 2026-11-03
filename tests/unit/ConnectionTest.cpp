@@ -38,7 +38,8 @@ bool contains(const std::string& text, std::string_view part) {
 
 std::size_t count(const std::string& text, std::string_view part) {
     std::size_t n = 0;
-    for (std::size_t pos = text.find(part); pos != std::string::npos; pos = text.find(part, pos + 1)) ++n;
+    for (std::size_t pos = text.find(part); pos != std::string::npos; pos = text.find(part, pos + 1))
+        ++n;
     return n;
 }
 
@@ -47,7 +48,8 @@ std::string drain(Socket& peer) {
     std::string out;
     std::array<char, 65536> buffer;
     ssize_t n;
-    while ((n = peer.recv_some(buffer)) > 0) out.append(buffer.data(), static_cast<std::size_t>(n));
+    while ((n = peer.recv_some(buffer)) > 0)
+        out.append(buffer.data(), static_cast<std::size_t>(n));
     return out;
 }
 
@@ -73,7 +75,9 @@ struct Fixture {
         conn = std::make_unique<Connection>(Socket{fds[1]}, std::move(handler), t0, options);
     }
 
-    void send(std::string_view data) { ASSERT_TRUE(peer.send_all(data)); }
+    void send(std::string_view data) {
+        ASSERT_TRUE(peer.send_all(data));
+    }
 };
 
 } // namespace

@@ -70,9 +70,13 @@ protected:
         canonical_root = fs::canonical(root); // no macOS /var e link para /private/var
     }
 
-    void TearDown() override { fs::remove_all(base); }
+    void TearDown() override {
+        fs::remove_all(base);
+    }
 
-    static void touch(const fs::path& path) { std::ofstream{path} << "x"; }
+    static void touch(const fs::path& path) {
+        std::ofstream{path} << "x";
+    }
 
     fs::path base;
     fs::path root;

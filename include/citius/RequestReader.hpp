@@ -17,7 +17,7 @@ enum class ReadStatus {
 
 struct ReadResult {
     ReadStatus status = ReadStatus::ERROR;
-    std::string data; ///< bytes recebidos; pode conter o inicio do corpo apos os cabecalhos
+    std::string data;          ///< bytes recebidos; pode conter o inicio do corpo apos os cabecalhos
     std::size_t head_size = 0; ///< bytes de data ate o fim de "\r\n\r\n" (so com COMPLETE); o resto e corpo
     std::string surplus; ///< so em read_request_body: bytes recebidos alem do corpo (inicio da proxima requisicao)
 };

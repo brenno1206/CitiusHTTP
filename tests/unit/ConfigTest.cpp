@@ -40,8 +40,8 @@ TEST(ConfigTest, SemArgumentosUsaOsPadroes) {
 }
 
 TEST(ConfigTest, LeTodasAsOpcoesComValorSeparado) {
-    ConfigResult r = parse({"--port", "9090", "--root", "/tmp/site", "--max-connections", "16",
-                            "--read-timeout-ms", "2000", "--idle-timeout-ms", "300", "--log-level", "debug"});
+    ConfigResult r = parse({"--port", "9090", "--root", "/tmp/site", "--max-connections", "16", "--read-timeout-ms",
+                            "2000", "--idle-timeout-ms", "300", "--log-level", "debug"});
 
     ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
     EXPECT_EQ(r.config.port, 9090);
@@ -69,7 +69,7 @@ TEST(ConfigTest, OpcaoRepetidaVenceAUltima) {
 }
 
 TEST(ConfigTest, PortaNosLimites) {
-    EXPECT_EQ(parse({"--port", "0"}).config.port, 0);  // 0 = o SO escolhe
+    EXPECT_EQ(parse({"--port", "0"}).config.port, 0); // 0 = o SO escolhe
     EXPECT_EQ(parse({"--port", "65535"}).config.port, 65535);
     espera_erro({"--port", "65536"}, "--port");
     espera_erro({"--port", "99999999999999999999"}, "--port");
