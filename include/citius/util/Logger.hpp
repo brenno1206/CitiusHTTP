@@ -1,6 +1,10 @@
 #pragma once
+#include "citius/util/RotatingFile.hpp"
 #include <atomic>
+#include <cstddef>
+#include <filesystem>
 #include <iosfwd>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -22,8 +26,15 @@ enum class LogLevel {
 /// @return o nivel de nome @p name ("debug", "INFO"...; ignora maiusculas), ou std::nullopt se invalido.
 [[nodiscard]] std::optional<LogLevel> parse_log_level(std::string_view name);
 
+/// Tamanho a partir do qual o arquivo de log rotaciona (padrao: 10 MB).
+inline constexpr std::size_t kDefaultLogMaxBytes = 10 * 1024 * 1024;
+
+/// Quantos arquivos de log antigos ficam guardados (padrao: 5).
+inline constexpr std::size_t kDefaultLogKeep = 5;
+
 /// Escreve linhas "2026-11-03 14:20:01 [INFO] mensagem". DEBUG e INFO vao para o fluxo de saida;
-/// WARN e ERROR, para o de erro. Mensagens abaixo do nivel minimo sao descartadas.
+/// WARN e ERROR, para o de erro. Mensagens abaixo do nivel minimo sao descartadas. Com log_to_file(), TODAS as
+/// mensagens vao para o arquivo (com rotacao) e o console fica quieto.
 ///
 /// Seguro para varias threads: cada linha e montada fora do lock e escrita de uma vez, entao
 /// linhas de threads diferentes nunca se misturam (e nao ha corrida no estado dos fluxos, que o
@@ -41,6 +52,14 @@ public:
     Logger(Logger&&) = delete;
     Logger& operator=(Logger&&) = delete;
     ~Logger() = default;
+
+    /// Passa a escrever num arquivo com rotacao por tamanho (ver RotatingFile) em vez de no console. Se uma escrita no
+    /// arquivo falhar (disco cheio, pasta removida...), a linha NAO se perde: vai para o fluxo de erro. Chame na
+    /// inicializacao, antes de o servidor atender (pode ser chamado com o Logger em uso, mas nao desfaz).
+    /// @param max_bytes tamanho a partir do qual rotaciona; @param keep quantos arquivos antigos guardar.
+    /// @throws std::runtime_error se o arquivo nao puder ser aberto; o Logger segue escrevendo no console.
+    void log_to_file(const std::filesystem::path& path, std::size_t max_bytes = kDefaultLogMaxBytes,
+                     std::size_t keep = kDefaultLogKeep);
 
     /// @return o Logger do processo, ligado a std::cout/std::cerr. Os testes criam o proprio Logger.
     [[nodiscard]] static Logger& instance();
@@ -69,6 +88,7 @@ private:
     std::ostream& m_err;
     std::atomic<LogLevel> m_level;
     std::mutex m_mutex;
+    std::unique_ptr<RotatingFile> m_file; ///< destino em arquivo, se log_to_file() foi chamado (protegido por m_mutex)
     static_assert(std::atomic<LogLevel>::is_always_lock_free);
 };
 

@@ -1,13 +1,18 @@
 #include "citius/util/Logger.hpp"
 #include "citius/util/AsciiText.hpp"
+#include "citius/util/RotatingFile.hpp"
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <ctime>
+#include <filesystem>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace citius {
 
@@ -49,6 +54,13 @@ std::optional<LogLevel> parse_log_level(std::string_view name) {
 Logger::Logger(std::ostream& out, std::ostream& err, LogLevel level) noexcept
     : m_out(out), m_err(err), m_level(level) {}
 
+void Logger::log_to_file(const std::filesystem::path& path, std::size_t max_bytes, std::size_t keep) {
+    // abre antes de pegar o lock: se falhar (excecao), nada mudou e o Logger segue no console
+    auto file = std::make_unique<RotatingFile>(path, max_bytes, keep);
+    std::scoped_lock const lock{m_mutex};
+    m_file = std::move(file);
+}
+
 Logger& Logger::instance() {
     static Logger logger{std::cout, std::cerr};
     return logger;
@@ -68,6 +80,8 @@ void Logger::log(LogLevel level, std::string_view message) {
     line += '\n';
 
     std::scoped_lock const lock{m_mutex};
+    if (m_file && m_file->write(line)) return;
+    // Sem arquivo, ou a escrita nele falhou: console. Nunca perder a linha em silencio.
     // flush a cada linha: com stdout redirecionado para arquivo ele e totalmente bufferizado, e
     // um log que so aparece quando o buffer enche (ou o servidor cai) nao serve para investigar
     std::ostream& stream = level >= LogLevel::WARN ? m_err : m_out;
