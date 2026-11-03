@@ -7,6 +7,7 @@ namespace citius {
 enum class StatusCode {
     OK = 200,
     BAD_REQUEST = 400,
+    FORBIDDEN = 403,
     NOT_FOUND = 404,
     METHOD_NOT_ALLOWED = 405,
     PAYLOAD_TOO_LARGE = 413,
@@ -22,6 +23,7 @@ enum class StatusCode {
     switch (status) {
         case StatusCode::OK: return "OK";
         case StatusCode::BAD_REQUEST: return "Bad Request";
+        case StatusCode::FORBIDDEN: return "Forbidden";
         case StatusCode::NOT_FOUND: return "Not Found";
         case StatusCode::METHOD_NOT_ALLOWED: return "Method Not Allowed";
         case StatusCode::PAYLOAD_TOO_LARGE: return "Content Too Large";
