@@ -39,7 +39,6 @@ add_library(citius_core STATIC
     src/Logger.cpp
     src/Config.cpp
     src/Socket.cpp
-    src/RequestReader.cpp
     src/RequestAssembler.cpp
     src/Connection.cpp
     src/Server.cpp

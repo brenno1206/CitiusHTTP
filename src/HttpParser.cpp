@@ -167,7 +167,7 @@ ParseResult HttpParser::parse(std::string_view raw_head) {
     std::size_t pos = line_end + kCrlf.size();
     while (true) {
         std::size_t const end = raw_head.find(kCrlf, pos);
-        // sem linha vazia final a cabeca esta incompleta (o read_request_head garante que existe)
+        // sem linha vazia final a cabeca esta incompleta (o RequestAssembler garante que existe)
         if (end == std::string_view::npos) return ParseResult::failure(ParseError::BAD_REQUEST);
 
         std::string_view const line = raw_head.substr(pos, end - pos);

@@ -23,7 +23,6 @@ add_executable(citius_tests
     unit/RouterTest.cpp
     unit/ThreadPoolTest.cpp
     unit/SocketTest.cpp
-    unit/RequestReaderTest.cpp
     unit/PollerTest.cpp
     unit/RequestAssemblerTest.cpp
     unit/ConnectionTest.cpp
