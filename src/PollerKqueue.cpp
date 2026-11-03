@@ -60,8 +60,7 @@ std::vector<PollEvent> Poller::wait(std::chrono::milliseconds timeout) {
 
     const int n = kevent(m_handle.get(), nullptr, 0, raw.data(), static_cast<int>(raw.size()), &ts);
     if (n < 0) {
-        if (errno == EINTR)
-            return {};
+        if (errno == EINTR) return {};
         throw std::runtime_error("Falha no kevent.");
     }
 

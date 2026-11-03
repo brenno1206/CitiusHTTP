@@ -6,3 +6,5 @@ PointerAlignment: Left
 AllowShortFunctionsOnASingleLine: Empty
 BreakBeforeBraces: Attach
 SpaceBeforeParens: ControlStatements
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true

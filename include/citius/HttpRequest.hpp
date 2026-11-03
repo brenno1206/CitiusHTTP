@@ -48,8 +48,7 @@ struct HttpRequest {
     [[nodiscard]] bool keep_alive() const {
         const bool persistent_by_default = version == "HTTP/1.1";
         auto it = headers.find("connection");
-        if (it == headers.end())
-            return persistent_by_default;
+        if (it == headers.end()) return persistent_by_default;
 
         bool has_close = false;
         bool has_keep_alive = false;
@@ -58,15 +57,12 @@ struct HttpRequest {
             std::size_t comma = list.find(',');
             std::string_view token = list.substr(0, comma);
             list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
-            while (!token.empty() && (token.front() == ' ' || token.front() == '\t'))
-                token.remove_prefix(1);
-            while (!token.empty() && (token.back() == ' ' || token.back() == '\t'))
-                token.remove_suffix(1);
+            while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) token.remove_prefix(1);
+            while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) token.remove_suffix(1);
             has_close = has_close || iequals(token, "close");
             has_keep_alive = has_keep_alive || iequals(token, "keep-alive");
         }
-        if (has_close)
-            return false;
+        if (has_close) return false;
         return has_keep_alive || persistent_by_default;
     }
 };

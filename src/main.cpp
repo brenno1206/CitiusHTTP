@@ -43,8 +43,7 @@ void install_stop_handlers() {
 // sem subi-lo ate o maximo permitido, algumas centenas de clientes ja dariam "Too many open files".
 void raise_fd_limit(std::size_t max_connections) {
     rlimit limit{};
-    if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
-        return;
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0) return;
 
     rlim_t wanted = limit.rlim_max;
 #ifdef OPEN_MAX
@@ -52,8 +51,7 @@ void raise_fd_limit(std::size_t max_connections) {
 #endif
     if (wanted > limit.rlim_cur) {
         limit.rlim_cur = wanted;
-        if (setrlimit(RLIMIT_NOFILE, &limit) != 0)
-            getrlimit(RLIMIT_NOFILE, &limit);
+        if (setrlimit(RLIMIT_NOFILE, &limit) != 0) getrlimit(RLIMIT_NOFILE, &limit);
     }
     // alem das conexoes ha o socket de escuta, o kqueue/epoll, stdin/out/err e arquivos servidos
     constexpr rlim_t kReserved = 16;
@@ -70,8 +68,7 @@ int main(int argc, char** argv) {
     const char* program = argc > 0 ? argv[0] : "citius_server";
     // argv[0] e o nome do programa; os argumentos de verdade comecam em 1 (argc pode ser 0 em execucoes exoticas)
     std::vector<std::string_view> args;
-    if (argc > 1)
-        args.assign(argv + 1, argv + argc);
+    if (argc > 1) args.assign(argv + 1, argv + argc);
 
     // saida do operador (ajuda/erro de uso) vai direto ao terminal: o Logger ainda nao foi configurado
     citius::ConfigResult parsed = citius::parse_config(args);

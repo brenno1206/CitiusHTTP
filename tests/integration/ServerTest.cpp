@@ -93,8 +93,7 @@ std::string requisitar(Server& server, const std::vector<std::string>& pedacos, 
         EXPECT_TRUE(cliente.send_all(pedaco));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    if (encerrar_envio)
-        terminar_envio(cliente);
+    if (encerrar_envio) terminar_envio(cliente);
     std::string resposta = ler_tudo(cliente);
     servidor.join();
     return resposta;
@@ -454,10 +453,8 @@ namespace {
 // e o limite padrao do macOS (256) nao comporta centenas delas.
 bool elevar_limite_de_fds(rlim_t minimo) {
     rlimit limite{};
-    if (::getrlimit(RLIMIT_NOFILE, &limite) != 0)
-        return false;
-    if (limite.rlim_cur >= minimo)
-        return true;
+    if (::getrlimit(RLIMIT_NOFILE, &limite) != 0) return false;
+    if (limite.rlim_cur >= minimo) return true;
     limite.rlim_cur = std::min(minimo, limite.rlim_max);
     return ::setrlimit(RLIMIT_NOFILE, &limite) == 0 && limite.rlim_cur >= minimo;
 }
@@ -467,16 +464,13 @@ bool elevar_limite_de_fds(rlim_t minimo) {
 // O ponto da Fase 7: com uma thread por conexao, 500 clientes parados prenderiam 500 threads.
 TEST(ServerConcorrenciaTest, QuinhentasConexoesAbertasAoMesmoTempoSaoTodasAtendidas) {
     constexpr int kClientes = 500;
-    if (!elevar_limite_de_fds(2 * kClientes + 100))
-        GTEST_SKIP() << "nao foi possivel subir o limite de descritores";
+    if (!elevar_limite_de_fds(2 * kClientes + 100)) GTEST_SKIP() << "nao foi possivel subir o limite de descritores";
     ServidorEmExecucao exec;
     std::vector<Socket> clientes; // depois do servidor: fecham antes dele
     clientes.reserve(kClientes);
 
-    for (int i = 0; i < kClientes; ++i)
-        clientes.push_back(conectar(exec.server.port()));
-    for (auto& cliente : clientes)
-        ASSERT_TRUE(cliente.send_all(kGetIndex));
+    for (int i = 0; i < kClientes; ++i) clientes.push_back(conectar(exec.server.port()));
+    for (auto& cliente : clientes) ASSERT_TRUE(cliente.send_all(kGetIndex));
 
     // todas continuam abertas (keep-alive) e todas recebem a resposta
     std::array<char, 4096> buffer;
@@ -503,8 +497,7 @@ TEST(ServerConcorrenciaTest, SlowlorisComUmByteDeVezEmQuandoRecebe408NoPrazoTota
     for (std::size_t i = 0; i < requisicao.size() && resposta.empty(); ++i) {
         EXPECT_TRUE(cliente.send_all(requisicao.substr(i, 1)));
         ssize_t n = cliente.recv_some(buffer); // espera ate 100 ms: serve de pausa e de leitura
-        if (n > 0)
-            resposta.assign(buffer.data(), static_cast<std::size_t>(n));
+        if (n > 0) resposta.assign(buffer.data(), static_cast<std::size_t>(n));
     }
     const auto demorou = std::chrono::steady_clock::now() - inicio;
 
@@ -630,8 +623,7 @@ struct LeitorDeRespostas {
     std::string proxima() {
         std::size_t fim_cabeca;
         while ((fim_cabeca = buffer.find("\r\n\r\n")) == std::string::npos) {
-            if (!ler_mais())
-                return "";
+            if (!ler_mais()) return "";
         }
         fim_cabeca += 4;
         std::size_t tamanho = 0;
@@ -639,8 +631,7 @@ struct LeitorDeRespostas {
             tamanho = std::stoul(buffer.substr(pos + 16));
         }
         while (buffer.size() < fim_cabeca + tamanho) {
-            if (!ler_mais())
-                return "";
+            if (!ler_mais()) return "";
         }
         std::string resposta = buffer.substr(0, fim_cabeca + tamanho);
         buffer.erase(0, fim_cabeca + tamanho);
@@ -656,8 +647,7 @@ private:
     bool ler_mais() {
         std::array<char, 4096> tmp;
         ssize_t n = socket.recv_some(tmp);
-        if (n <= 0)
-            return false;
+        if (n <= 0) return false;
         buffer.append(tmp.data(), static_cast<std::size_t>(n));
         return true;
     }

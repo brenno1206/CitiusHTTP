@@ -44,8 +44,7 @@ using ConnectionMap = std::unordered_map<int, Entry>;
 // Depois de mexer numa conexao: acompanha o interesse dela no Poller.
 // @return false se ela fechou (ou nao da mais para vigiar) e deve ser descartada; o destrutor fecha o fd.
 bool sync_interest(Poller& poller, Entry& entry) {
-    if (entry.conn->closed())
-        return false;
+    if (entry.conn->closed()) return false;
     const Interest wanted = entry.conn->interest();
     if (wanted != entry.registered) {
         if (!poller.modify(entry.conn->fd(), wanted)) {
@@ -63,8 +62,7 @@ void reject_busy(Socket client) {
     HttpResponse busy = HttpResponse::make_error(StatusCode::SERVICE_UNAVAILABLE);
     (void)busy.set_header("Retry-After", "1");
     (void)busy.set_header("Connection", "close");
-    if (!client.set_no_sigpipe())
-        return;
+    if (!client.set_no_sigpipe()) return;
     (void)client.send_some(busy.serialize());
 }
 
@@ -171,10 +169,8 @@ void Server::event_loop(bool single_client) {
             // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
             const int fd = accept(m_server_socket.get(), nullptr, nullptr);
             if (fd < 0) {
-                if (errno == EINTR || errno == ECONNABORTED)
-                    continue; // sinal, ou o cliente desistiu: tenta o proximo
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return; // fila de espera vazia
+                if (errno == EINTR || errno == ECONNABORTED) continue; // sinal, ou o cliente desistiu: tenta o proximo
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return;   // fila de espera vazia
                 log_error("Falha ao aceitar conexao.");
                 std::this_thread::sleep_for(kAcceptErrorPause);
                 return;
@@ -191,8 +187,7 @@ void Server::event_loop(bool single_client) {
             options.read_timeout = std::chrono::milliseconds(m_read_timeout_ms.load());
             options.idle_timeout = std::chrono::milliseconds(m_idle_timeout_ms.load());
             auto conn = std::make_unique<Connection>(std::move(client), handler, now, options);
-            if (conn->closed())
-                continue;
+            if (conn->closed()) continue;
 
             const int conn_fd = conn->fd();
             if (!poller.add(conn_fd, Interest::READ)) {
@@ -200,8 +195,7 @@ void Server::event_loop(bool single_client) {
                 continue; // o destrutor de 'conn' fecha o fd
             }
             connections.emplace(conn_fd, Entry{std::move(conn), Interest::READ});
-            if (single_client)
-                stop_accepting(); // serve_one atende um cliente so
+            if (single_client) stop_accepting(); // serve_one atende um cliente so
         }
     };
 
@@ -211,38 +205,31 @@ void Server::event_loop(bool single_client) {
             // curso
             draining = true;
             stop_accepting();
-            if (!single_client)
-                log_info("Encerrando: esperando os clientes em andamento...");
+            if (!single_client) log_info("Encerrando: esperando os clientes em andamento...");
             for (auto it = connections.begin(); it != connections.end();) {
                 it->second.conn->close_when_idle();
                 it = sync_interest(poller, it->second) ? std::next(it) : connections.erase(it);
             }
         }
         // sem aceitar mais (parada, ou o unico cliente de serve_one) e sem conexoes: acabou
-        if (!accepting && connections.empty())
-            break;
+        if (!accepting && connections.empty()) break;
 
         for (const PollEvent& event : poller.wait(kLoopTick)) {
             const Clock::time_point now = Clock::now();
 
             if (event.fd == m_server_socket.get()) {
-                if (accepting)
-                    accept_pending(now);
+                if (accepting) accept_pending(now);
                 continue;
             }
             auto it = connections.find(event.fd);
-            if (it == connections.end())
-                continue;
+            if (it == connections.end()) continue;
 
             Connection& conn = *it->second.conn;
-            if (event.readable)
-                conn.on_readable(now);
+            if (event.readable) conn.on_readable(now);
             // "closed" sem "writable" acontece quando o par some durante o envio: on_writable descobre pelo erro do
             // send
-            if (!conn.closed() && (event.writable || event.closed))
-                conn.on_writable(now);
-            if (!sync_interest(poller, it->second))
-                connections.erase(it);
+            if (!conn.closed() && (event.writable || event.closed)) conn.on_writable(now);
+            if (!sync_interest(poller, it->second)) connections.erase(it);
         }
 
         // prazos: varredura periodica, nao a cada evento (com milhares de conexoes seria custo por evento)

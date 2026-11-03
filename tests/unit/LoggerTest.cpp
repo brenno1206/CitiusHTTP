@@ -122,8 +122,7 @@ TEST(LoggerTest, ThreadsNaoMisturamLinhas) {
             }
         });
     }
-    for (auto& thread : threads)
-        thread.join();
+    for (auto& thread : threads) thread.join();
 
     // cada linha precisa estar inteira: hora, nivel e a mensagem completa
     std::regex formato{R"(^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[INFO\] thread \d+ linha \d+$)"};

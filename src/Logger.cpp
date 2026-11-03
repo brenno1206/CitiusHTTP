@@ -36,8 +36,7 @@ std::string_view level_name(LogLevel level) noexcept {
 
 std::optional<LogLevel> parse_log_level(std::string_view name) {
     for (LogLevel level : {LogLevel::DEBUG, LogLevel::INFO, LogLevel::WARN, LogLevel::ERROR}) {
-        if (iequals(name, level_name(level)))
-            return level;
+        if (iequals(name, level_name(level))) return level;
     }
     return std::nullopt;
 }
@@ -51,8 +50,7 @@ Logger& Logger::instance() {
 }
 
 void Logger::log(LogLevel level, std::string_view message) {
-    if (!enabled(level))
-        return;
+    if (!enabled(level)) return;
 
     std::string line = timestamp();
     line += " [";

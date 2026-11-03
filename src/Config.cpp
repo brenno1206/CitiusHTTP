@@ -18,8 +18,7 @@ constexpr std::array<std::string_view, 6> kOptions{
 std::optional<std::uint64_t> parse_uint(std::string_view text) {
     std::uint64_t value = 0;
     auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (ec != std::errc{} || ptr != text.data() + text.size())
-        return std::nullopt;
+    if (ec != std::errc{} || ptr != text.data() + text.size()) return std::nullopt;
     return value;
 }
 
@@ -40,29 +39,23 @@ std::optional<std::string> apply(Config& config, std::string_view name, std::str
     std::optional<std::string> error;
 
     if (name == "--port") {
-        if ((error = read_number(name, value, 0, 65535, number)))
-            return error;
+        if ((error = read_number(name, value, 0, 65535, number))) return error;
         config.port = static_cast<std::uint16_t>(number);
     } else if (name == "--root") {
-        if (value.empty())
-            return std::format("valor invalido para {}: o caminho esta vazio", name);
+        if (value.empty()) return std::format("valor invalido para {}: o caminho esta vazio", name);
         config.root = value;
     } else if (name == "--max-connections") {
-        if ((error = read_number(name, value, 1, 1'000'000, number)))
-            return error;
+        if ((error = read_number(name, value, 1, 1'000'000, number))) return error;
         config.max_connections = static_cast<std::size_t>(number);
     } else if (name == "--read-timeout-ms") {
-        if ((error = read_number(name, value, 1, 3'600'000, number)))
-            return error;
+        if ((error = read_number(name, value, 1, 3'600'000, number))) return error;
         config.read_timeout = std::chrono::milliseconds(number);
     } else if (name == "--idle-timeout-ms") {
-        if ((error = read_number(name, value, 1, 3'600'000, number)))
-            return error;
+        if ((error = read_number(name, value, 1, 3'600'000, number))) return error;
         config.idle_timeout = std::chrono::milliseconds(number);
     } else if (name == "--log-level") {
         auto level = parse_log_level(value);
-        if (!level)
-            return std::format("valor invalido para {}: '{}' (use debug, info, warn ou error)", name, value);
+        if (!level) return std::format("valor invalido para {}: '{}' (use debug, info, warn ou error)", name, value);
         config.log_level = *level;
     }
     return std::nullopt;
@@ -86,8 +79,7 @@ ConfigResult parse_config(std::span<const std::string_view> args) {
             result.status = ParseStatus::HELP;
             return result;
         }
-        if (!arg.starts_with("--"))
-            return invalid(std::format("argumento inesperado: '{}'", arg));
+        if (!arg.starts_with("--")) return invalid(std::format("argumento inesperado: '{}'", arg));
 
         std::string_view name = arg;
         std::string_view value;
@@ -108,8 +100,7 @@ ConfigResult parse_config(std::span<const std::string_view> args) {
             }
             value = args[++i];
         }
-        if (auto error = apply(result.config, name, value))
-            return invalid(std::move(*error));
+        if (auto error = apply(result.config, name, value)) return invalid(std::move(*error));
     }
     return result;
 }

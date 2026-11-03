@@ -47,8 +47,7 @@ std::vector<PollEvent> Poller::wait(std::chrono::milliseconds timeout) {
     const int n =
         epoll_wait(m_handle.get(), raw.data(), static_cast<int>(raw.size()), static_cast<int>(timeout.count()));
     if (n < 0) {
-        if (errno == EINTR)
-            return {};
+        if (errno == EINTR) return {};
         throw std::runtime_error("Falha no epoll_wait.");
     }
 

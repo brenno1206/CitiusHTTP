@@ -111,8 +111,7 @@ TEST_F(StaticFilesTest, PathTraversalDa404ESemVazarOConteudo) {
 TEST_F(StaticFilesTest, SymlinkParaForaDa404) {
     std::error_code ec;
     fs::create_symlink(base / "secret.txt", root / "link.txt", ec);
-    if (ec)
-        GTEST_SKIP() << "sem symlink";
+    if (ec) GTEST_SKIP() << "sem symlink";
     HttpResponse response = citius::serve_static(root, get("/link.txt"));
     EXPECT_EQ(response.status(), StatusCode::NOT_FOUND);
     EXPECT_FALSE(contem(response.serialize(), "segredo"));
@@ -138,8 +137,7 @@ TEST_F(StaticFilesTest, ArquivoMaiorQueOLimiteDa500) {
 }
 
 TEST_F(StaticFilesTest, ArquivoSemPermissaoDa403) {
-    if (::geteuid() == 0)
-        GTEST_SKIP() << "root le qualquer arquivo";
+    if (::geteuid() == 0) GTEST_SKIP() << "root le qualquer arquivo";
     escrever(root / "bloqueado.txt", "x");
     fs::permissions(root / "bloqueado.txt", fs::perms::none);
     EXPECT_EQ(citius::serve_static(root, get("/bloqueado.txt")).status(), StatusCode::FORBIDDEN);
