@@ -92,10 +92,14 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Analisar src/
         run: |
+          # o clang-tidy do pip nao conhece o SDK da Apple: sem SDKROOT nao acha nem <errno.h>
+          if [ "$RUNNER_OS" = "macOS" ]; then export SDKROOT="$(xcrun --show-sdk-path)"; fi
+          # so os fontes do projeto (o compile_commands.json tambem lista o GoogleTest, baixado em build/_deps)
           python - <<'PY' > files.txt
-          import json
+          import json, os
+          src = os.path.abspath("src") + os.sep
           for e in json.load(open("build/compile_commands.json")):
-              if "/src/" in e["file"]:
+              if os.path.abspath(e["file"]).startswith(src):
                   print(e["file"])
           PY
           xargs clang-tidy -p build --quiet < files.txt

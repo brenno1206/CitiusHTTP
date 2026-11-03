@@ -9,6 +9,7 @@
 #include <exception>
 #include <format>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <sys/resource.h> // getrlimit(), setrlimit()
@@ -46,10 +47,13 @@ void raise_fd_limit(std::size_t max_connections) {
     rlimit limit{};
     if (getrlimit(RLIMIT_NOFILE, &limit) != 0) return;
 
-    rlim_t wanted = limit.rlim_max;
+    // macOS recusa mais que OPEN_MAX mesmo quando rlim_max e "ilimitado"; no Linux nao ha esse teto
 #ifdef OPEN_MAX
-    wanted = std::min<rlim_t>(wanted, OPEN_MAX); // macOS recusa mais que OPEN_MAX mesmo com rlim_max "ilimitado"
+    constexpr rlim_t kPlatformCap = OPEN_MAX;
+#else
+    constexpr rlim_t kPlatformCap = std::numeric_limits<rlim_t>::max();
 #endif
+    const rlim_t wanted = std::min(limit.rlim_max, kPlatformCap);
     if (wanted > limit.rlim_cur) {
         limit.rlim_cur = wanted;
         if (setrlimit(RLIMIT_NOFILE, &limit) != 0) getrlimit(RLIMIT_NOFILE, &limit);
