@@ -1,0 +1,22 @@
+body {
+  font-family: system-ui, sans-serif;
+  background: #f5f7fa;
+  color: #1f2933;
+  margin: 0;
+}
+
+main {
+  max-width: 40rem;
+  margin: 4rem auto;
+  padding: 0 1rem;
+}
+
+h1 {
+  color: #0b6bcb;
+}
+
+code {
+  background: #e4e7eb;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
