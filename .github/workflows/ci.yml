@@ -1,0 +1,56 @@
+name: CI
+
+# push em qualquer branch: os resultados aparecem no PR do mesmo commit, sem rodar duas vezes
+on:
+  push:
+  workflow_dispatch:
+
+# um push novo na mesma branch cancela a execução anterior, que ficou velha
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Compila (com warnings como erro) e roda os testes em macOS e Linux, com dois compiladores no Linux.
+  # O Linux é o que exercita PollerEpoll.cpp e o ramo MSG_NOSIGNAL do Socket.
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "macOS (Apple Clang)", os: macos-latest, cxx: clang++ }
+          - { name: "Ubuntu (gcc)", os: ubuntu-24.04, cxx: g++ }
+          - { name: "Ubuntu (clang)", os: ubuntu-24.04, cxx: clang++ }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCITIUS_WERROR=ON -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+      - name: Compilar
+        run: cmake --build build --parallel
+      - name: Testar
+        run: ctest --test-dir build --output-on-failure --parallel 2
+
+  # ASan+UBSan (memória e comportamento indefinido) e TSan (corridas de dados). Em builds separados:
+  # o ThreadSanitizer não combina com o AddressSanitizer.
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "ASan + UBSan", flag: CITIUS_SANITIZE }
+          - { name: "ThreadSanitizer", flag: CITIUS_TSAN }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCITIUS_WERROR=ON -DCMAKE_CXX_COMPILER=clang++ -D${{ matrix.flag }}=ON
+      - name: Compilar
+        run: cmake --build build --parallel
+      - name: Testar
+        # sem --parallel: sob sanitizer os testes de tempo ficam mais sensíveis à carga da máquina
+        run: ctest --test-dir build --output-on-failure
