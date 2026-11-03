@@ -2,9 +2,7 @@
 
 [![CI](https://github.com/brenno1206/CitiusHTTP/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/brenno1206/CitiusHTTP/actions/workflows/ci.yml)
 
-Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é duplo: ter um servidor funcional e, ao mesmo tempo, aprender (e demonstrar em portfólio) como software de rede de qualidade profissional é projetado.
-
-> **Status:** em construção (Fases 0 a 8 concluídas, mais uma rodada de dívidas técnicas). Um event loop de uma thread (`kqueue`/`epoll`) atende todos os clientes, com keep-alive, prazos por conexão (leitura total, ociosidade, escrita), *lingering close*, backoff do `accept` e `503` acima de `--max-connections`. O HTTP é estrito: `Content-Length` e `Transfer-Encoding: chunked` (decodificado, sem brecha de *request smuggling*), `Expect: 100-continue`, limites de tamanho e os status 400, 408, 413, 414, 417, 431, 501 e 505. Serve arquivos de `www/` em streaming (sem limite de tamanho, com o caminho conferido no descritor contra path traversal e TOCTOU), tem `Router` com 405/`Allow`, log em arquivo com rotação e configuração por linha de comando ou arquivo. Código em grupos (`util`, `net`, `http`, `parse`, `routing`, `files`, `server`) com a regra de camadas verificada no CI, ~470 testes (unitários e de integração) e CI em macOS e Linux. Veja o [Roadmap](#6-roadmap-por-fases).
+Servidor HTTP/1.1 escrito do zero em **C++20**, sem frameworks, usando apenas a biblioteca padrão e as APIs POSIX de sockets. O objetivo é ter um servidor funcional e, ao mesmo tempo, aprender como software de rede de qualidade profissional é projetado.
 
 ---
 
