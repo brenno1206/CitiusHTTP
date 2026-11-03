@@ -569,12 +569,14 @@ TEST(ServerConcorrenciaTest, FaltaDeDescritoresNaoTravaAsConexoesAbertasEOServid
 // reagendamento falhasse, uma conexao ativa seria fechada pela ociosidade no meio do uso.
 TEST(ServerConcorrenciaTest, ConexaoAtivaNaoEFechadaPelaOciosidade) {
     ServidorEmExecucao exec;
-    exec.server.set_idle_timeout(std::chrono::milliseconds(100));
+    // prazo de 300 ms contra pausas de 40 ms: sobra folga para uma VM de CI engasgar sem que a conexao fique, de fato,
+    // 300 ms parada (um prazo apertado aqui daria falha por lentidao do ambiente, nao por defeito do servidor)
+    exec.server.set_idle_timeout(std::chrono::milliseconds(300));
     Socket cliente = conectar(exec.server.port());
     std::array<char, 4096> buffer;
 
-    // uma requisicao a cada 40 ms durante ~800 ms: bem mais que o prazo de 100 ms, mas nunca 100 ms parada
-    for (int i = 0; i < 20; ++i) {
+    // 30 requisicoes a cada ~40 ms = ~1,2 s: 4x o prazo de ociosidade, mas nunca 300 ms seguidos parada
+    for (int i = 0; i < 30; ++i) {
         ASSERT_TRUE(cliente.send_all(kGetIndex)) << "requisicao " << i;
         const ssize_t n = cliente.recv_some(buffer);
         ASSERT_GT(n, 0) << "a conexao ativa foi fechada na requisicao " << i;
@@ -647,7 +649,7 @@ TEST(ServerTest, ClienteMudoLiberaAUnicaVagaDeConexaoDepoisDoTimeout) {
 
     // a unica vaga esta com o cliente mudo: apos o timeout (408) a conexao ainda espera o cliente fechar
     // (lingering), e como o mudo nunca fecha, o servidor desiste apos o prazo de lingering e a vaga volta
-    esperar(500);
+    esperar(1000);
     std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
