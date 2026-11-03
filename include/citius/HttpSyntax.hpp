@@ -8,7 +8,7 @@ namespace citius {
 
 /// @return true se @p c e um "tchar" da RFC 9110 (secao 5.6.2): letra, digito ou um de !#$%&'*+-.^_`|~
 [[nodiscard]] inline bool is_tchar(char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) ||
+    return (std::isalnum(static_cast<unsigned char>(c)) != 0) ||
            std::string_view("!#$%&'*+-.^_`|~").find(c) != std::string_view::npos;
 }
 

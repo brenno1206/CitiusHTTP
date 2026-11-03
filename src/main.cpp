@@ -18,7 +18,8 @@ namespace {
 
 // O handler de sinal nao recebe argumentos, entao precisa achar o servidor por uma variavel global.
 // std::atomic de ponteiro e lock-free: ler e escrever dentro de um handler e permitido.
-std::atomic<citius::Server*> g_server = nullptr;
+std::atomic<citius::Server*> g_server = nullptr; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): o
+                                                 // handler de sinal so alcanca o servidor por aqui
 
 // Dentro de um handler quase nada e seguro (nada de cout, malloc, mutex); request_stop()
 // so grava um std::atomic<bool>, que e.
@@ -62,9 +63,7 @@ void raise_fd_limit(std::size_t max_connections) {
     }
 }
 
-} // namespace
-
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
     const char* program = argc > 0 ? argv[0] : "citius_server";
     // argv[0] e o nome do programa; os argumentos de verdade comecam em 1 (argc pode ser 0 em execucoes exoticas)
     std::vector<std::string_view> args;
@@ -104,4 +103,18 @@ int main(int argc, char** argv) {
         return 1;
     }
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // Rede de seguranca: excecao escapando de main chamaria std::terminate sem nenhuma mensagem
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& e) {
+        std::cerr << "Erro fatal: " << e.what() << '\n';
+    } catch (...) {
+        std::cerr << "Erro fatal desconhecido.\n";
+    }
+    return 1;
 }

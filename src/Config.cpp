@@ -39,19 +39,23 @@ std::optional<std::string> apply(Config& config, std::string_view name, std::str
     std::optional<std::string> error;
 
     if (name == "--port") {
-        if ((error = read_number(name, value, 0, 65535, number))) return error;
+        error = read_number(name, value, 0, 65535, number);
+        if (error) return error;
         config.port = static_cast<std::uint16_t>(number);
     } else if (name == "--root") {
         if (value.empty()) return std::format("valor invalido para {}: o caminho esta vazio", name);
         config.root = value;
     } else if (name == "--max-connections") {
-        if ((error = read_number(name, value, 1, 1'000'000, number))) return error;
+        error = read_number(name, value, 1, 1'000'000, number);
+        if (error) return error;
         config.max_connections = static_cast<std::size_t>(number);
     } else if (name == "--read-timeout-ms") {
-        if ((error = read_number(name, value, 1, 3'600'000, number))) return error;
+        error = read_number(name, value, 1, 3'600'000, number);
+        if (error) return error;
         config.read_timeout = std::chrono::milliseconds(number);
     } else if (name == "--idle-timeout-ms") {
-        if ((error = read_number(name, value, 1, 3'600'000, number))) return error;
+        error = read_number(name, value, 1, 3'600'000, number);
+        if (error) return error;
         config.idle_timeout = std::chrono::milliseconds(number);
     } else if (name == "--log-level") {
         auto level = parse_log_level(value);

@@ -35,8 +35,12 @@ public:
     /// @param level nivel minimo: mensagens mais fracas sao ignoradas
     Logger(std::ostream& out, std::ostream& err, LogLevel level = LogLevel::INFO) noexcept;
 
+    // guarda referencias aos fluxos e um mutex: nao e copiavel nem movivel
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
+    Logger(Logger&&) = delete;
+    Logger& operator=(Logger&&) = delete;
+    ~Logger() = default;
 
     /// @return o Logger do processo, ligado a std::cout/std::cerr. Os testes criam o proprio Logger.
     [[nodiscard]] static Logger& instance();

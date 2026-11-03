@@ -39,8 +39,9 @@ AssembleStatus RequestAssembler::advance() {
         }
 
         ParseResult parsed = HttpParser::parse(std::string_view{m_buffer}.substr(0, head_size));
-        if (!parsed.ok()) {
-            return fail(to_status(*parsed.error));
+        if (!parsed.request) {
+            // pela invariante de ParseResult sem requisicao ha sempre um erro; o BAD_REQUEST so cobre um uso indevido
+            return fail(parsed.error ? to_status(*parsed.error) : StatusCode::BAD_REQUEST);
         }
         m_request = std::move(*parsed.request);
         m_buffer.erase(0, head_size);

@@ -34,7 +34,7 @@ std::optional<std::string> decode_target_path(std::string_view target) {
             if (high < 0 || low < 0) {
                 return std::nullopt;
             }
-            c = static_cast<char>(high * 16 + low);
+            c = static_cast<char>((high * 16) + low);
             i += 2;
         }
         // NUL truncaria o caminho em chamadas de SO escritas em C ("a\0b" abriria "a")

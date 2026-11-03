@@ -45,8 +45,8 @@ std::optional<ParseError> validate_version(std::string_view version) {
     if (!version.starts_with(kPrefix)) return ParseError::BAD_REQUEST;
 
     std::string_view const numbers = version.substr(kPrefix.size());
-    bool const well_formed = numbers.size() == 3 && std::isdigit(static_cast<unsigned char>(numbers[0])) &&
-                             numbers[1] == '.' && std::isdigit(static_cast<unsigned char>(numbers[2]));
+    bool const well_formed = numbers.size() == 3 && (std::isdigit(static_cast<unsigned char>(numbers[0])) != 0) &&
+                             numbers[1] == '.' && (std::isdigit(static_cast<unsigned char>(numbers[2])) != 0);
     if (!well_formed) return ParseError::BAD_REQUEST;
 
     if (version != "HTTP/1.1" && version != "HTTP/1.0") return ParseError::VERSION_NOT_SUPPORTED;
@@ -126,7 +126,7 @@ std::optional<ParseError> parse_content_length(const HttpRequest::Headers& heade
     // acumula digito a digito parando assim que passa do limite: nunca estoura size_t
     std::size_t value = 0;
     for (char const c : text) {
-        value = value * 10 + static_cast<std::size_t>(c - '0');
+        value = (value * 10) + static_cast<std::size_t>(c - '0');
         if (value > HttpParser::kMaxBodyLength) return ParseError::PAYLOAD_TOO_LARGE;
     }
     length = value;

@@ -7,6 +7,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Tipo de build" FORCE)
 endif()
 
+# compile_commands.json no diretorio de build: e o que o clang-tidy (e os editores) usam para saber
+# como cada arquivo e compilado
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Warnings como erro: cmake -S . -B build -DCITIUS_WERROR=ON. Fica desligado por padrao para que um
 # compilador novo, com warnings novos, nao impeca ninguem de compilar; o CI liga.
 option(CITIUS_WERROR "Trata warnings como erros" OFF)

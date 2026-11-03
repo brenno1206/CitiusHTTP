@@ -1,5 +1,6 @@
 #include "citius/Logger.hpp"
 #include "citius/HttpSyntax.hpp"
+#include <array>
 #include <chrono>
 #include <ctime>
 #include <iostream>
@@ -13,9 +14,9 @@ std::string timestamp() {
     std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     std::tm local{};
     localtime_r(&now, &local);
-    char buffer[32];
-    std::size_t const size = std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local);
-    return std::string(buffer, size);
+    std::array<char, 32> buffer{};
+    std::size_t const size = std::strftime(buffer.data(), buffer.size(), "%Y-%m-%d %H:%M:%S", &local);
+    return {buffer.data(), size};
 }
 
 } // namespace
@@ -62,7 +63,7 @@ void Logger::log(LogLevel level, std::string_view message) {
     }
     line += '\n';
 
-    std::lock_guard const lock{m_mutex};
+    std::scoped_lock const lock{m_mutex};
     // flush a cada linha: com stdout redirecionado para arquivo ele e totalmente bufferizado, e
     // um log que so aparece quando o buffer enche (ou o servidor cai) nao serve para investigar
     std::ostream& stream = level >= LogLevel::WARN ? m_err : m_out;
