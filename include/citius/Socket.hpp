@@ -60,14 +60,26 @@ public:
     /// @return false se a opcao nao pode ser definida.
     [[nodiscard]] bool set_recv_timeout(std::chrono::milliseconds timeout) noexcept;
 
+    /// Coloca o socket em modo nao bloqueante (O_NONBLOCK): recv_some() e send_some() passam a
+    /// devolver -1 com errno == EAGAIN/EWOULDBLOCK em vez de esperar. E o modo do event loop (Poller).
+    /// Nao use send_all() num socket nao bloqueante: ele desistiria no primeiro EAGAIN.
+    /// @return false se a opcao nao pode ser definida.
+    [[nodiscard]] bool set_nonblocking() noexcept;
+
     /// Envia todos os bytes de @p data, repetindo send() em envios parciais e em EINTR.
+    /// Para sockets bloqueantes (num nao bloqueante falha com EAGAIN se o buffer do kernel encher).
     /// @return false se a conexao falhou (ex.: o cliente fechou) antes de enviar tudo.
     [[nodiscard]] bool send_all(std::string_view data) noexcept;
+
+    /// Envia o que couber de @p data com um unico send(); o resto fica por conta do chamador.
+    /// @return bytes enviados (pode ser menos que data.size()); -1 em erro (errno == EAGAIN/EWOULDBLOCK
+    ///         se o buffer do kernel esta cheio num socket nao bloqueante; EINTR se um sinal interrompeu).
+    [[nodiscard]] ssize_t send_some(std::string_view data) noexcept;
 
     /// Le ate buffer.size() bytes com um unico recv() (repete apenas em EINTR).
     /// Pode devolver menos do que o pedido: o TCP nao preserva fronteiras de mensagem.
     /// @return bytes lidos; 0 se o par fechou a conexao; -1 em erro (errno == EAGAIN/EWOULDBLOCK se
-    ///         o prazo de set_recv_timeout() estourou).
+    ///         o prazo de set_recv_timeout() estourou, ou se nao ha dados num socket nao bloqueante).
     [[nodiscard]] ssize_t recv_some(std::span<char> buffer) noexcept;
 
 private:
