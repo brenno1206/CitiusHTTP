@@ -13,6 +13,7 @@ include(GoogleTest)
 
 add_executable(citius_tests
     unit/HttpParserTest.cpp
+    unit/HttpRequestTest.cpp
     unit/HttpResponseTest.cpp
     unit/MimeTest.cpp
     unit/StaticPathTest.cpp

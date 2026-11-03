@@ -3,17 +3,29 @@
 #include "citius/Router.hpp"
 #include "citius/Socket.hpp"
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 
 namespace citius {
 
+/// Quanto tempo esperar por dados de um cliente antes de responder 408 (padrao).
+inline constexpr std::chrono::milliseconds kDefaultReadTimeout{10000};
+
+/// Quanto tempo uma conexao keep-alive pode ficar parada esperando a proxima requisicao (padrao).
+inline constexpr std::chrono::milliseconds kDefaultIdleTimeout{5000};
+
+/// Quantas requisicoes uma conexao atende antes de o servidor fecha-la (evita conexao eterna).
+inline constexpr std::size_t kMaxRequestsPerConnection = 100;
+
 /// Quantos clientes aceitos podem esperar por uma thread livre em run() (padrao).
 inline constexpr std::size_t kDefaultMaxQueuedClients = 128;
 
 /// Servidor HTTP: escuta numa porta TCP; run() atende varios clientes ao mesmo tempo com um
-/// ThreadPool. Cada conexao recebe uma unica requisicao e e fechada em seguida (sem keep-alive).
+/// ThreadPool. As conexoes sao persistentes (keep-alive, RFC 9112 secao 9.3): uma thread atende
+/// varias requisicoes seguidas do mesmo cliente, ate ele pedir "Connection: close", ficar
+/// kDefaultIdleTimeout parado, causar um erro ou chegar a kMaxRequestsPerConnection.
 class Server {
 public:
     /// Abre o socket de escuta em @p port (IPv4, todas as interfaces).
@@ -34,6 +46,16 @@ public:
     /// Registre as rotas antes de chamar run()/serve_one() (o Router nao e thread-safe para escrita).
     /// Um handler que lance excecao vira resposta 500; o servidor continua de pe.
     [[nodiscard]] Router& router() noexcept { return m_router; }
+
+    /// Define o prazo de cada leitura de um cliente (ver Socket::set_recv_timeout); estourou, o
+    /// cliente recebe 408 e a conexao fecha. Vale para os clientes aceitos depois da chamada e pode
+    /// ser chamado de qualquer thread. Prazo <= 0 e ignorado.
+    void set_read_timeout(std::chrono::milliseconds timeout) noexcept;
+
+    /// Define quanto uma conexao keep-alive pode esperar a proxima requisicao; estourou, o servidor
+    /// a fecha sem responder nada (nao ha requisicao a responder). Pode ser chamado de qualquer
+    /// thread. Prazo <= 0 e ignorado.
+    void set_idle_timeout(std::chrono::milliseconds timeout) noexcept;
 
     /// Espera um cliente, le a requisicao, responde e fecha a conexao, tudo na thread que chamou.
     /// Falhas de um cliente (conexao cortada, requisicao invalida) nao lancam: sao registradas.
@@ -57,7 +79,7 @@ private:
     /// @return o cliente, ou um Socket invalido se pediram para parar ou se o accept falhou.
     Socket accept_client();
 
-    /// Le a requisicao de @p client, responde e deixa o chamador fechar o socket. Chamado de varias
+    /// Atende @p client em laco (varias requisicoes, se keep-alive) e deixa o chamador fechar o socket. Chamado de varias
     /// threads ao mesmo tempo: so le o estado do Server (roteador e raiz), sem alterar nada.
     void handle_client(Socket& client) const;
 
@@ -67,6 +89,8 @@ private:
     Router m_router;              ///< rotas registradas + fallback para m_root
     std::size_t m_threads;        ///< tamanho do pool de run()
     std::size_t m_max_queued;     ///< fila de espera do pool de run()
+    std::atomic<std::chrono::milliseconds::rep> m_read_timeout_ms{kDefaultReadTimeout.count()};
+    std::atomic<std::chrono::milliseconds::rep> m_idle_timeout_ms{kDefaultIdleTimeout.count()};
     std::atomic<bool> m_stop = false;
     static_assert(std::atomic<bool>::is_always_lock_free, "request_stop() precisa ser seguro em handler de sinal");
 };

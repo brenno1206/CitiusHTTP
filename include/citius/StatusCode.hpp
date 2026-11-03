@@ -10,6 +10,7 @@ enum class StatusCode {
     FORBIDDEN = 403,
     NOT_FOUND = 404,
     METHOD_NOT_ALLOWED = 405,
+    REQUEST_TIMEOUT = 408,
     PAYLOAD_TOO_LARGE = 413,
     URI_TOO_LONG = 414,
     HEADERS_TOO_LARGE = 431,
@@ -27,6 +28,7 @@ enum class StatusCode {
         case StatusCode::FORBIDDEN: return "Forbidden";
         case StatusCode::NOT_FOUND: return "Not Found";
         case StatusCode::METHOD_NOT_ALLOWED: return "Method Not Allowed";
+        case StatusCode::REQUEST_TIMEOUT: return "Request Timeout";
         case StatusCode::PAYLOAD_TOO_LARGE: return "Content Too Large";
         case StatusCode::URI_TOO_LONG: return "URI Too Long";
         case StatusCode::HEADERS_TOO_LARGE: return "Request Header Fields Too Large";
