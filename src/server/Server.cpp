@@ -256,6 +256,7 @@ void Server::start(std::uint16_t port) {
 
     // com porta 0 so agora o sistema sabe qual porta escolheu
     sockaddr_in bound{};
+    // NOLINTNEXTLINE(misc-include-cleaner): socklen_t vem de <sys/socket.h> (incluido); o check nao o mapeia no glibc
     socklen_t bound_size = sizeof(bound);
     if (getsockname(m_server_socket.get(), reinterpret_cast<sockaddr*>(&bound), &bound_size) < 0) {
         throw std::runtime_error("Falha no getsockname.");
