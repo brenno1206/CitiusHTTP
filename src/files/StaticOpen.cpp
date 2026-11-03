@@ -5,6 +5,7 @@
 #include <array>
 #include <cerrno>
 #include <climits> // IWYU pragma: keep (PATH_MAX)
+#include <cstddef> // IWYU pragma: keep (std::size_t, so no ramo do Linux)
 #include <cstdint>
 #include <fcntl.h>
 #include <filesystem>
