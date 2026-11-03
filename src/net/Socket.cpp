@@ -69,6 +69,10 @@ bool Socket::set_nonblocking() noexcept {
     return flags >= 0 && ::fcntl(m_fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
+bool Socket::shutdown_write() noexcept {
+    return ::shutdown(m_fd, SHUT_WR) == 0;
+}
+
 bool Socket::send_all(std::string_view data) noexcept {
     while (!data.empty()) {
         ssize_t const sent = send_some(data);

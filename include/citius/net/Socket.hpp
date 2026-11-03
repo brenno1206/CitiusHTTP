@@ -70,6 +70,11 @@ public:
     /// @return false se a opcao nao pode ser definida.
     [[nodiscard]] bool set_nonblocking() noexcept;
 
+    /// Encerra o lado de escrita (shutdown SHUT_WR): o par recebe o que ja foi enviado e depois o fim da conexao (FIN),
+    /// mas este socket continua podendo receber. Base do fechamento "lingering" (RFC 9112 secao 9.6).
+    /// @return false se falhar (ex.: socket invalido ou ja desconectado).
+    [[nodiscard]] bool shutdown_write() noexcept;
+
     /// Envia todos os bytes de @p data, repetindo send() em envios parciais e em EINTR.
     /// Para sockets bloqueantes (num nao bloqueante falha com EAGAIN se o buffer do kernel encher).
     /// @return false se a conexao falhou (ex.: o cliente fechou) antes de enviar tudo.

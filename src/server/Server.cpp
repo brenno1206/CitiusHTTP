@@ -70,21 +70,26 @@ void reject_busy(Socket client) {
     (void)client.send_some(busy.serialize());
 }
 
+// Os prazos que o Server permite ajustar, lidos a cada cliente novo (por isso referencias a atomicos).
+struct TimeoutSettings {
+    const std::atomic<std::chrono::milliseconds::rep>& read;
+    const std::atomic<std::chrono::milliseconds::rep>& idle;
+    const std::atomic<std::chrono::milliseconds::rep>& linger;
+};
+
 // O event loop em si: um objeto por chamada a run()/serve_one(), com o estado que existe enquanto ele
 // roda (Poller, conexoes, se ainda aceita, se esta encerrando). Cada metodo cuida de uma coisa: aceitar,
 // tratar um evento, varrer prazos, encerrar.
 class EventLoop {
 public:
     using Clock = Connection::Clock;
-    using AtomicMillis = std::atomic<std::chrono::milliseconds::rep>;
 
     /// @param single_client aceita um cliente so e termina quando a conexao dele acabar (serve_one)
-    /// @param read_timeout_ms,idle_timeout_ms lidos a cada cliente novo: o Server pode muda-los durante run()
+    /// @param timeouts lidos a cada cliente novo: o Server pode muda-los durante run()
     EventLoop(Listener& listener, bool single_client, std::size_t max_connections, Connection::Handler handler,
-              const AtomicMillis& read_timeout_ms, const AtomicMillis& idle_timeout_ms, const std::atomic<bool>& stop)
+              TimeoutSettings timeouts, const std::atomic<bool>& stop)
         : m_listener(listener), m_single_client(single_client), m_max_connections(max_connections),
-          m_handler(std::move(handler)), m_read_timeout_ms(read_timeout_ms), m_idle_timeout_ms(idle_timeout_ms),
-          m_stop(stop), m_next_sweep(Clock::now() + kLoopTick) {
+          m_handler(std::move(handler)), m_timeouts(timeouts), m_stop(stop), m_next_sweep(Clock::now() + kLoopTick) {
         if (!m_poller.add(m_listener.fd(), Interest::READ)) {
             throw std::runtime_error("Falha ao registrar o socket de escuta no Poller.");
         }
@@ -160,8 +165,9 @@ private:
 
     void admit(Socket client, Clock::time_point now) {
         ConnectionOptions options;
-        options.read_timeout = std::chrono::milliseconds(m_read_timeout_ms.load());
-        options.idle_timeout = std::chrono::milliseconds(m_idle_timeout_ms.load());
+        options.read_timeout = std::chrono::milliseconds(m_timeouts.read.load());
+        options.idle_timeout = std::chrono::milliseconds(m_timeouts.idle.load());
+        options.linger_timeout = std::chrono::milliseconds(m_timeouts.linger.load());
         auto conn = std::make_unique<Connection>(std::move(client), m_handler, now, options);
         if (conn->closed()) return;
 
@@ -201,8 +207,7 @@ private:
     bool m_single_client;
     std::size_t m_max_connections;
     Connection::Handler m_handler;
-    const AtomicMillis& m_read_timeout_ms;
-    const AtomicMillis& m_idle_timeout_ms;
+    TimeoutSettings m_timeouts;
     const std::atomic<bool>& m_stop;
     ConnectionMap m_connections;
     bool m_accepting = true;
@@ -239,6 +244,12 @@ void Server::set_idle_timeout(std::chrono::milliseconds timeout) noexcept {
     }
 }
 
+void Server::set_linger_timeout(std::chrono::milliseconds timeout) noexcept {
+    if (timeout > std::chrono::milliseconds::zero()) {
+        m_linger_timeout_ms.store(timeout.count());
+    }
+}
+
 void Server::serve_one() {
     event_loop(true);
 }
@@ -252,8 +263,7 @@ void Server::event_loop(bool single_client) {
                    single_client,
                    m_max_connections,
                    [this](const HttpRequest& request) { return m_router.route(request); },
-                   m_read_timeout_ms,
-                   m_idle_timeout_ms,
+                   TimeoutSettings{m_read_timeout_ms, m_idle_timeout_ms, m_linger_timeout_ms},
                    m_stop};
     loop.run();
 }

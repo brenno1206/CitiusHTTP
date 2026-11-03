@@ -24,6 +24,13 @@ inline constexpr std::chrono::milliseconds kDefaultIdleTimeout{5000};
 /// prenda a conexao e a memoria da resposta.
 inline constexpr std::chrono::milliseconds kDefaultWriteTimeout{30000};
 
+/// Quanto tempo uma conexao que vai fechar espera o cliente fechar o lado dele (padrao). Ver Connection (lingering
+/// close).
+inline constexpr std::chrono::milliseconds kDefaultLingerTimeout{2000};
+
+/// Quantos bytes uma conexao em lingering descarta antes de desistir e fechar (um cliente que nao para de enviar).
+inline constexpr std::size_t kMaxLingerBytes = 1024 * 1024;
+
 /// Quantas requisicoes uma conexao atende antes de o servidor fecha-la (evita conexao eterna).
 inline constexpr std::size_t kMaxRequestsPerConnection = 100;
 
@@ -34,8 +41,9 @@ struct ConnectionOptions {
     std::chrono::milliseconds idle_timeout =
         kDefaultIdleTimeout; ///< prazo entre requisicoes; estourou, fecha em silencio
     std::chrono::milliseconds write_timeout =
-        kDefaultWriteTimeout;                             ///< prazo para a resposta sair inteira; estourou, fecha
-    std::size_t max_requests = kMaxRequestsPerConnection; ///< requisicoes por conexao
+        kDefaultWriteTimeout; ///< prazo para a resposta sair inteira; estourou, fecha
+    std::chrono::milliseconds linger_timeout = kDefaultLingerTimeout;    ///< prazo do lingering close; estourou, fecha
+    std::size_t max_requests = kMaxRequestsPerConnection;                ///< requisicoes por conexao
     std::size_t max_head_bytes = RequestAssembler::kDefaultMaxHeadBytes; ///< teto da cabeca; acima, 431
 };
 
@@ -43,6 +51,13 @@ struct ConnectionOptions {
 /// por conexao, agora como maquina de estados que avanca quando o loop avisa que algo aconteceu.
 ///
 ///   READING --(requisicao completa)--> WRITING --(resposta enviada)--> READING (keep-alive)
+///                                                                  \-> LINGERING -> CLOSED (close, erro, limite)
+///
+/// LINGERING (RFC 9112 secao 9.6): depois da ultima resposta a conexao envia o FIN (shutdown de escrita) e continua
+/// lendo e descartando ate o cliente fechar, ate kDefaultLingerTimeout ou ate kMaxLingerBytes. Fechar de uma vez
+/// com dados do cliente ainda por ler faz o SO mandar um RST, que pode apagar a resposta (o 400/431/503, por exemplo)
+/// antes de o cliente le-la.
+///
 ///                                                                  \-> CLOSED (close, erro, limite)
 ///
 /// O loop (Poller) chama: on_readable() quando ha dados, on_writable() quando cabe escrever
@@ -77,6 +92,11 @@ public:
         return m_state == State::CLOSED;
     }
 
+    /// @return true se ja enviou tudo, ja mandou o FIN e so espera o cliente fechar (descartando o que ele enviar).
+    [[nodiscard]] bool lingering() const noexcept {
+        return m_state == State::LINGERING;
+    }
+
     /// @return o que o Poller deve vigiar: READ enquanto espera uma requisicao, WRITE enquanto
     ///         sobra resposta a enviar. Pode mudar depois de qualquer chamada abaixo.
     [[nodiscard]] Interest interest() const noexcept {
@@ -104,7 +124,7 @@ public:
     void close_when_idle();
 
 private:
-    enum class State { READING, WRITING, CLOSED };
+    enum class State { READING, WRITING, LINGERING, CLOSED };
 
     /// Alimenta o assembler com @p bytes e atende requisicoes ate faltar dado, ficar resposta pendente ou fechar.
     void drive(Clock::time_point now, std::string_view bytes);
@@ -114,6 +134,9 @@ private:
     /// @return true se o buffer de saida esvaziou; false se sobrou (EAGAIN) ou a conexao fechou por erro.
     bool flush();
     void finish_write(Clock::time_point now);
+    /// Manda o FIN e passa a esperar o cliente fechar; se nao der, fecha.
+    void begin_lingering(Clock::time_point now);
+    void discard_input();
     void close() noexcept;
 
     Socket m_socket;
@@ -124,8 +147,9 @@ private:
     std::string m_out;         ///< resposta serializada, ainda nao enviada por inteiro
     std::size_t m_out_pos = 0; ///< quantos bytes de m_out ja saíram
     bool m_close_after_write = false;
-    bool m_draining = false;  ///< close_when_idle() foi chamado
-    std::size_t m_served = 0; ///< requisicoes ja atendidas nesta conexao
+    bool m_draining = false;     ///< close_when_idle() foi chamado
+    std::size_t m_discarded = 0; ///< bytes descartados em LINGERING
+    std::size_t m_served = 0;    ///< requisicoes ja atendidas nesta conexao
     Clock::time_point m_deadline;
 };
 

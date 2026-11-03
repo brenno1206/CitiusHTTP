@@ -60,6 +60,11 @@ public:
     /// da chamada e pode ser chamado de qualquer thread. Prazo <= 0 e ignorado.
     void set_idle_timeout(std::chrono::milliseconds timeout) noexcept;
 
+    /// Define quanto uma conexao que vai fechar espera o cliente fechar o lado dele antes de o servidor desistir (ver
+    /// Connection, lingering close). Enquanto espera, a conexao ainda conta no limite de max_connections. Vale para os
+    /// clientes aceitos depois da chamada; pode ser chamado de qualquer thread. Prazo <= 0 e ignorado.
+    void set_linger_timeout(std::chrono::milliseconds timeout) noexcept;
+
     /// Atende um unico cliente: espera a conexao, serve as requisicoes dela ate ela fechar (keep-alive
     /// incluido) e retorna. Falhas do cliente (conexao cortada, requisicao invalida) nao lancam: sao
     /// registradas. Retorna sem atender ninguem se request_stop() for chamado antes de um cliente chegar.
@@ -88,6 +93,7 @@ private:
     std::size_t m_max_connections;
     std::atomic<std::chrono::milliseconds::rep> m_read_timeout_ms{kDefaultReadTimeout.count()};
     std::atomic<std::chrono::milliseconds::rep> m_idle_timeout_ms{kDefaultIdleTimeout.count()};
+    std::atomic<std::chrono::milliseconds::rep> m_linger_timeout_ms{kDefaultLingerTimeout.count()};
     std::atomic<bool> m_stop = false;
     Listener
         m_listener; ///< socket de escuta (nao bloqueante); declarado por ultimo: so abre a porta depois da validacao

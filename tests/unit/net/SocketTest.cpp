@@ -294,3 +294,26 @@ TEST(SocketTest, SendSomeDevolveErroEmSocketInvalido) {
 
     EXPECT_EQ(socket.send_some("x"), -1);
 }
+
+TEST(SocketTest, ShutdownWriteEnviaOFimMasAindaRecebe) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket a{fds[0]};
+    Socket b{fds[1]};
+
+    ASSERT_TRUE(a.send_all("resposta"));
+    ASSERT_TRUE(a.shutdown_write());
+
+    // b le os dados e depois ve o fim da conexao (FIN), mas a ainda esta aberto para receber
+    std::array<char, 16> buffer;
+    ASSERT_EQ(b.recv_some(buffer), 8);
+    EXPECT_EQ(b.recv_some(buffer), 0);
+    ASSERT_TRUE(b.send_all("ok"));
+    EXPECT_EQ(a.recv_some(buffer), 2);
+}
+
+TEST(SocketTest, ShutdownWriteFalhaEmSocketInvalido) {
+    Socket socket;
+
+    EXPECT_FALSE(socket.shutdown_write());
+}

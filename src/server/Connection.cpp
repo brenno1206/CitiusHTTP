@@ -62,6 +62,10 @@ void Connection::close() noexcept {
 }
 
 void Connection::on_readable(Clock::time_point now) {
+    if (m_state == State::LINGERING) {
+        discard_input();
+        return;
+    }
     if (m_state != State::READING) return;
 
     std::array<char, kReadChunk> buffer;
@@ -168,12 +172,47 @@ bool Connection::flush() {
 
 void Connection::finish_write(Clock::time_point now) {
     const bool buffered = m_assembler.has_buffered_data();
-    if (m_close_after_write || (m_draining && !buffered)) {
-        close();
+    if (m_close_after_write) {
+        begin_lingering(now);
+        return;
+    }
+    if (m_draining && !buffered) {
+        close(); // parada do servidor e nada mais a responder: nao ha o que proteger
         return;
     }
     m_state = State::READING;
     m_deadline = now + (buffered ? m_options.read_timeout : m_options.idle_timeout);
+}
+
+void Connection::begin_lingering(Clock::time_point now) {
+    // O FIN vai depois da resposta (o SO envia o que esta na fila antes). Se o shutdown falhar (o cliente ja foi
+    // embora, ENOTCONN), nao ha o que proteger: fecha.
+    if (!m_socket.shutdown_write()) {
+        close();
+        return;
+    }
+    m_state = State::LINGERING;
+    m_deadline = now + m_options.linger_timeout;
+    m_discarded = 0;
+}
+
+void Connection::discard_input() {
+    std::array<char, kReadChunk> buffer;
+    const ssize_t received = m_socket.recv_some(buffer);
+    if (received < 0) {
+        if (!would_block()) close();
+        return;
+    }
+    // 0 = o cliente fechou o lado dele: agora sim podemos fechar sem risco de RST
+    if (received == 0) {
+        close();
+        return;
+    }
+    m_discarded += static_cast<std::size_t>(received);
+    if (m_discarded >= kMaxLingerBytes) {
+        log_debug("(cliente nao para de enviar durante o fechamento)");
+        close();
+    }
 }
 
 void Connection::on_writable(Clock::time_point now) {
@@ -192,6 +231,10 @@ void Connection::check_deadline(Clock::time_point now) {
         close();
         return;
     }
+    if (m_state == State::LINGERING) {
+        close(); // o cliente nao fechou a tempo: ja demos a ele a chance de ler a resposta
+        return;
+    }
 
     // Primeira requisicao que nao veio, ou requisicao pela metade: ha a quem responder. Entre
     // requisicoes, ficar calado e normal: nao ha requisicao a responder, so fechamos.
@@ -199,6 +242,8 @@ void Connection::check_deadline(Clock::time_point now) {
         log_info("(cliente parado) -> 408");
         const std::string response = close_with(StatusCode::REQUEST_TIMEOUT).serialize();
         (void)m_socket.send_some(response); // uma tentativa so: quem esta parado talvez nem receba
+        begin_lingering(now);
+        return;
     }
     close();
 }
@@ -206,7 +251,9 @@ void Connection::check_deadline(Clock::time_point now) {
 void Connection::close_when_idle() {
     if (closed()) return;
     m_draining = true;
-    if (m_state == State::READING && !m_assembler.has_buffered_data()) close();
+    // Ociosa (nada a ler nem a responder) ou em lingering (so espera o cliente fechar: na parada nao vale esperar)
+    const bool idle = m_state == State::READING && !m_assembler.has_buffered_data();
+    if (idle || m_state == State::LINGERING) close();
 }
 
 } // namespace citius

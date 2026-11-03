@@ -519,13 +519,28 @@ TEST(ServerTest, ClienteMudoRecebe408ELiberaAThread) {
 TEST(ServerTest, ClienteMudoLiberaAUnicaVagaDeConexaoDepoisDoTimeout) {
     ServidorEmExecucao exec{1};
     exec.server.set_read_timeout(std::chrono::milliseconds(100));
+    exec.server.set_linger_timeout(std::chrono::milliseconds(150));
     Socket mudo = conectar(exec.server.port());
 
-    // a unica vaga esta com o cliente mudo; depois do timeout (408) ela volta e o proximo e atendido
-    esperar(300);
+    // a unica vaga esta com o cliente mudo: apos o timeout (408) a conexao ainda espera o cliente fechar
+    // (lingering), e como o mudo nunca fecha, o servidor desiste apos o prazo de lingering e a vaga volta
+    esperar(500);
     std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+}
+
+TEST(ServerTest, ClienteQueFechaDepoisDoErroLiberaAVagaNaHora) {
+    ServidorEmExecucao exec{1};
+    exec.server.set_read_timeout(std::chrono::milliseconds(100));
+
+    {
+        Socket cliente = conectar(exec.server.port());
+        EXPECT_TRUE(comeca_com(ler_tudo(cliente), "HTTP/1.1 408 Request Timeout\r\n")); // le ate o FIN do servidor
+    } // o cliente fecha: o lingering termina na hora, sem esperar o prazo de 2 s
+
+    esperar(100);
+    EXPECT_TRUE(comeca_com(requisitar_em(exec.server.port(), kGetIndex), "HTTP/1.1 200 OK\r\n"));
 }
 
 // ---- corpo da requisicao ----
