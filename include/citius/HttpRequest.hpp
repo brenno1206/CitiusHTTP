@@ -1,4 +1,6 @@
 #pragma once
+#include <functional>
+#include <map>
 #include <string>
 
 namespace citius {
@@ -14,9 +16,15 @@ enum class HttpMethod {
 
 /// Requisicao HTTP ja interpretada. Os campos sao copias (nao dependem do buffer original).
 struct HttpRequest {
+    /// Cabecalhos: nome sempre em minusculas ("content-type"); valor sem espacos nas pontas.
+    /// Cabecalhos repetidos sao juntados com ", ". O comparador transparente permite
+    /// buscar com std::string_view: headers.find("host").
+    using Headers = std::map<std::string, std::string, std::less<>>;
+
     HttpMethod method = HttpMethod::UNKNOWN;
-    std::string path;    ///< alvo da requisicao, ex.: "/index.html"
-    std::string version; ///< ex.: "HTTP/1.1"
+    std::string path;    ///< alvo da requisicao como veio, incluindo query string, ex.: "/busca?q=1"
+    std::string version; ///< "HTTP/1.0" ou "HTTP/1.1"
+    Headers headers;
 };
 
 } // namespace citius
