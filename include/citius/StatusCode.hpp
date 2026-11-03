@@ -15,6 +15,7 @@ enum class StatusCode {
     HEADERS_TOO_LARGE = 431,
     INTERNAL_SERVER_ERROR = 500,
     NOT_IMPLEMENTED = 501,
+    SERVICE_UNAVAILABLE = 503,
     VERSION_NOT_SUPPORTED = 505
 };
 
@@ -31,6 +32,7 @@ enum class StatusCode {
         case StatusCode::HEADERS_TOO_LARGE: return "Request Header Fields Too Large";
         case StatusCode::INTERNAL_SERVER_ERROR: return "Internal Server Error";
         case StatusCode::NOT_IMPLEMENTED: return "Not Implemented";
+        case StatusCode::SERVICE_UNAVAILABLE: return "Service Unavailable";
         case StatusCode::VERSION_NOT_SUPPORTED: return "HTTP Version Not Supported";
     }
     return "Unknown";

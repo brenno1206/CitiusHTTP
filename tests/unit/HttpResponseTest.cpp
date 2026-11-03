@@ -20,6 +20,7 @@ TEST(StatusCodeTest, FrasesPadraoDosCodigosUsados) {
     EXPECT_EQ(citius::reason_phrase(StatusCode::HEADERS_TOO_LARGE), "Request Header Fields Too Large");
     EXPECT_EQ(citius::reason_phrase(StatusCode::INTERNAL_SERVER_ERROR), "Internal Server Error");
     EXPECT_EQ(citius::reason_phrase(StatusCode::NOT_IMPLEMENTED), "Not Implemented");
+    EXPECT_EQ(citius::reason_phrase(StatusCode::SERVICE_UNAVAILABLE), "Service Unavailable");
     EXPECT_EQ(citius::reason_phrase(StatusCode::VERSION_NOT_SUPPORTED), "HTTP Version Not Supported");
 }
 
