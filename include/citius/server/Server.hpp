@@ -1,6 +1,6 @@
 #pragma once
 
-#include "citius/net/Socket.hpp"
+#include "citius/net/Listener.hpp"
 #include "citius/routing/Router.hpp"
 #include "citius/server/Connection.hpp"
 #include <atomic>
@@ -40,7 +40,7 @@ public:
 
     /// @return a porta em que o servidor realmente escuta.
     [[nodiscard]] std::uint16_t port() const noexcept {
-        return m_port;
+        return m_listener.port();
     }
 
     /// Roteador das requisicoes. Caminhos sem rota caem nos arquivos estaticos de @c root.
@@ -79,20 +79,18 @@ public:
     }
 
 private:
-    void start(std::uint16_t port);
-
     /// O event loop de run() e serve_one(). Com @p single_client, aceita um cliente so e retorna
     /// quando a conexao dele terminar.
     void event_loop(bool single_client);
 
-    Socket m_server_socket; ///< socket de escuta (nao bloqueante); fecha sozinho no destrutor
-    std::uint16_t m_port = 0;
     std::filesystem::path m_root; ///< pasta de onde os arquivos estaticos sao servidos
     Router m_router;              ///< rotas registradas + fallback para m_root
     std::size_t m_max_connections;
     std::atomic<std::chrono::milliseconds::rep> m_read_timeout_ms{kDefaultReadTimeout.count()};
     std::atomic<std::chrono::milliseconds::rep> m_idle_timeout_ms{kDefaultIdleTimeout.count()};
     std::atomic<bool> m_stop = false;
+    Listener
+        m_listener; ///< socket de escuta (nao bloqueante); declarado por ultimo: so abre a porta depois da validacao
     static_assert(std::atomic<bool>::is_always_lock_free, "request_stop() precisa ser seguro em handler de sinal");
 };
 

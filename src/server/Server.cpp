@@ -3,13 +3,12 @@
 #include "citius/http/HttpRequest.hpp"
 #include "citius/http/HttpResponse.hpp"
 #include "citius/http/StatusCode.hpp"
+#include "citius/net/Listener.hpp"
 #include "citius/net/Poller.hpp"
 #include "citius/net/Socket.hpp"
 #include "citius/server/Connection.hpp"
 #include "citius/util/Logger.hpp"
-#include <arpa/inet.h> // IWYU pragma: keep (ntohs)
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -17,9 +16,7 @@
 #include <format>
 #include <iterator>
 #include <memory>
-#include <netinet/in.h> // Para struct sockaddr_in, htons(), htonl()
-#include <stdexcept>    // Para lançar std::runtime_error
-#include <sys/socket.h> // Para socket(), bind(), listen()
+#include <stdexcept> // Para lançar std::runtime_error
 #include <thread>
 #include <unordered_map>
 #include <utility> // std::move
@@ -83,12 +80,12 @@ public:
 
     /// @param single_client aceita um cliente so e termina quando a conexao dele acabar (serve_one)
     /// @param read_timeout_ms,idle_timeout_ms lidos a cada cliente novo: o Server pode muda-los durante run()
-    EventLoop(int listener_fd, bool single_client, std::size_t max_connections, Connection::Handler handler,
+    EventLoop(Listener& listener, bool single_client, std::size_t max_connections, Connection::Handler handler,
               const AtomicMillis& read_timeout_ms, const AtomicMillis& idle_timeout_ms, const std::atomic<bool>& stop)
-        : m_listener_fd(listener_fd), m_single_client(single_client), m_max_connections(max_connections),
+        : m_listener(listener), m_single_client(single_client), m_max_connections(max_connections),
           m_handler(std::move(handler)), m_read_timeout_ms(read_timeout_ms), m_idle_timeout_ms(idle_timeout_ms),
           m_stop(stop), m_next_sweep(Clock::now() + kLoopTick) {
-        if (!m_poller.add(m_listener_fd, Interest::READ)) {
+        if (!m_poller.add(m_listener.fd(), Interest::READ)) {
             throw std::runtime_error("Falha ao registrar o socket de escuta no Poller.");
         }
     }
@@ -115,7 +112,7 @@ private:
 
     void stop_accepting() {
         if (m_accepting) {
-            (void)m_poller.remove(m_listener_fd);
+            (void)m_poller.remove(m_listener.fd());
             m_accepting = false;
         }
     }
@@ -136,17 +133,22 @@ private:
 
     // @return false quando nao ha mais cliente a aceitar por agora (ou o accept falhou)
     bool accept_one(Clock::time_point now) {
-        // nullptr, nullptr: por enquanto nao queremos saber o endereco do cliente
-        const int fd = accept(m_listener_fd, nullptr, nullptr);
-        if (fd < 0) {
-            if (errno == EINTR || errno == ECONNABORTED) return true;  // sinal, ou o cliente desistiu: tenta o proximo
-            if (errno == EAGAIN || errno == EWOULDBLOCK) return false; // fila de espera vazia
+        AcceptResult accepted = m_listener.accept();
+        switch (accepted.status) {
+        case AcceptStatus::ACCEPTED:
+            break;
+        case AcceptStatus::RETRY:
+            return true; // sinal, ou o cliente desistiu: tenta o proximo
+        case AcceptStatus::EMPTY:
+            return false; // fila de espera vazia
+        case AcceptStatus::EXHAUSTED:
+        case AcceptStatus::FAILED:
             log_error("Falha ao aceitar conexao.");
             std::this_thread::sleep_for(kAcceptErrorPause);
             return false;
         }
 
-        Socket client{fd};
+        Socket client = std::move(accepted.socket);
         if (m_connections.size() >= m_max_connections) {
             log_warn("(limite de conexoes) -> 503");
             reject_busy(std::move(client));
@@ -173,7 +175,7 @@ private:
     }
 
     void handle_event(const PollEvent& event, Clock::time_point now) {
-        if (event.fd == m_listener_fd) {
+        if (event.fd == m_listener.fd()) {
             if (m_accepting) accept_pending(now);
             return;
         }
@@ -195,7 +197,7 @@ private:
     }
 
     Poller m_poller;
-    int m_listener_fd;
+    Listener& m_listener;
     bool m_single_client;
     std::size_t m_max_connections;
     Connection::Handler m_handler;
@@ -208,62 +210,21 @@ private:
     Clock::time_point m_next_sweep;
 };
 
-} // namespace
-
-Server::Server(std::uint16_t port, std::filesystem::path root, std::size_t max_connections)
-    : m_root(std::move(root)), m_max_connections(max_connections) {
+// Validado antes de o Listener abrir a porta: um argumento invalido nao deve deixar uma porta aberta por um instante.
+std::size_t validated_max_connections(std::size_t max_connections) {
     if (max_connections == 0) {
         throw std::invalid_argument("Server: max_connections deve ser maior que zero.");
     }
-    // captura a raiz por valor: o fallback nao pode depender do endereco do Server (que e movivel)
-    m_router.set_fallback([root = m_root](const HttpRequest& request) { return serve_static(root, request); });
-    start(port);
+    return max_connections;
 }
 
-void Server::start(std::uint16_t port) {
-    m_server_socket.reset(socket(AF_INET, SOCK_STREAM, 0));
+} // namespace
 
-    if (!m_server_socket.valid()) {
-        throw std::runtime_error("Erro na criacao do socket");
-    }
-
-    // precisa vir antes do bind, senao reiniciar o servidor falha com "Address already in use"
-    if (!m_server_socket.set_reuse_addr()) {
-        throw std::runtime_error("Falha ao definir SO_REUSEADDR.");
-    }
-
-    sockaddr_in address{
-        .sin_family = AF_INET,              // IPv4
-        .sin_port = htons(port),            // htons: converte para a ordem de bytes da rede (big-endian)
-        .sin_addr = {.s_addr = INADDR_ANY}, // aceita conexoes em qualquer interface da maquina
-        .sin_zero = {} // preenchimento: o Linux o declara, e -Wmissing-field-initializers reclama se faltar
-    };
-    if (bind(m_server_socket.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
-        throw std::runtime_error("Erro no bind.");
-    }
-
-    // fila de conexoes aguardando accept(). Com 10, uma rajada de ~30 clientes perdia conexoes no macOS
-    // (o cliente via a conexao cair sem resposta); SOMAXCONN pede o maximo que o SO permite
-    if (listen(m_server_socket.get(), SOMAXCONN) < 0) {
-        throw std::runtime_error("Falha no listen.");
-    }
-
-    // nao bloqueante: o aviso de "ha cliente" do Poller pode ser falso (o cliente desiste entre o aviso e
-    // o accept), e um accept bloqueante nesse caso travaria o loop inteiro ate o proximo cliente
-    if (!m_server_socket.set_nonblocking()) {
-        throw std::runtime_error("Falha ao tornar o socket de escuta nao bloqueante.");
-    }
-
-    // com porta 0 so agora o sistema sabe qual porta escolheu
-    sockaddr_in bound{};
-    // NOLINTNEXTLINE(misc-include-cleaner): socklen_t vem de <sys/socket.h> (incluido); o check nao o mapeia no glibc
-    socklen_t bound_size = sizeof(bound);
-    if (getsockname(m_server_socket.get(), reinterpret_cast<sockaddr*>(&bound), &bound_size) < 0) {
-        throw std::runtime_error("Falha no getsockname.");
-    }
-    m_port = ntohs(bound.sin_port);
-
-    log_info(std::format("Servidor escutando na porta {}...", m_port));
+Server::Server(std::uint16_t port, std::filesystem::path root, std::size_t max_connections)
+    : m_root(std::move(root)), m_max_connections(validated_max_connections(max_connections)), m_listener(port) {
+    // captura a raiz por valor: o fallback nao pode depender do endereco do Server (que e movivel)
+    m_router.set_fallback([root = m_root](const HttpRequest& request) { return serve_static(root, request); });
+    log_info(std::format("Servidor escutando na porta {}...", m_listener.port()));
 }
 
 void Server::set_read_timeout(std::chrono::milliseconds timeout) noexcept {
@@ -287,7 +248,7 @@ void Server::run() {
 }
 
 void Server::event_loop(bool single_client) {
-    EventLoop loop{m_server_socket.get(),
+    EventLoop loop{m_listener,
                    single_client,
                    m_max_connections,
                    [this](const HttpRequest& request) { return m_router.route(request); },

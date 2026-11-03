@@ -6,6 +6,7 @@ else()
 endif()
 
 target_sources(citius_core PRIVATE
+    Listener.cpp
     Socket.cpp
     ${CITIUS_POLLER_SOURCE}
 )
