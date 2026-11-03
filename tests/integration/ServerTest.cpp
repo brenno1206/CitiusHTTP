@@ -506,3 +506,23 @@ TEST(ServerTest, CorpoPrometidoMasNaoEnviadoDa408) {
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
 }
+
+TEST(ServerTest, TransferEncodingChunkedDa501) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(
+        server, "POST /eco HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 501 Not Implemented\r\n")) << resposta;
+}
+
+TEST(ServerTest, TransferEncodingMaisContentLengthDa400) {
+    Server server{0, raiz_de_teste()};
+    registrar_eco(server);
+
+    std::string resposta = requisitar(
+        server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nhello");
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 400 Bad Request\r\n")) << resposta;
+}

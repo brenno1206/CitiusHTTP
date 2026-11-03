@@ -55,6 +55,7 @@ public:
     /// unica vez: qualquer outra forma (sinal, lista "5, 5", repetido) e 400, porque interpretacoes
     /// diferentes do tamanho entre servidores sao a base do request smuggling. Acima de
     /// kMaxBodyLength e 413. O corpo em si nao e lido aqui.
+    /// Transfer-Encoding e recusado: 501 sozinho, 400 junto com Content-Length (request smuggling).
     ///
     /// Os dados sao copiados para o resultado, entao @p raw_head pode ser descartado depois.
     /// @return a requisicao ou o ParseError correspondente ao status a responder.

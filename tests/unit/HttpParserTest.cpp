@@ -269,3 +269,26 @@ TEST(HttpParserTest, ContentLengthGigantesco413SemEstourar) {
 TEST(HttpParserTest, ToStatusDoPayloadTooLarge) {
     EXPECT_EQ(citius::to_status(ParseError::PAYLOAD_TOO_LARGE), citius::StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+// ---- Transfer-Encoding ----
+
+TEST(HttpParserTest, TransferEncodingSozinhoDa501) {
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nTransfer-Encoding: chunked\r\n"), ParseError::NOT_IMPLEMENTED);
+}
+
+TEST(HttpParserTest, TransferEncodingComContentLengthDa400) {
+    // o caso classico de request smuggling (CL.TE / TE.CL): ambiguo, entao recusamos
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n"),
+                ParseError::BAD_REQUEST);
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n"),
+                ParseError::BAD_REQUEST);
+}
+
+TEST(HttpParserTest, TransferEncodingNaoDependeDeMaiusculas) {
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\ntRaNsFeR-eNcOdInG: identity\r\n"), ParseError::NOT_IMPLEMENTED);
+}
+
+TEST(HttpParserTest, TransferEncodingComContentLengthInvalidoContinuaSendo400) {
+    espera_erro(req("POST / HTTP/1.1", "Host: x\r\nContent-Length: abc\r\nTransfer-Encoding: chunked\r\n"),
+                ParseError::BAD_REQUEST);
+}

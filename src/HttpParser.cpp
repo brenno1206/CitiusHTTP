@@ -173,6 +173,13 @@ ParseResult HttpParser::parse(std::string_view raw_head) {
     if (request.version == "HTTP/1.1" && host_count != 1) {
         return ParseResult::failure(ParseError::BAD_REQUEST);
     }
+    // Transfer-Encoding (chunked) nao e suportado. Com Content-Length junto, dois servidores em fila
+    // podem discordar de onde a mensagem termina (request smuggling): a RFC 9112 (6.1) manda tratar
+    // como erro. Sozinho e so uma funcionalidade que nao temos: 501.
+    if (request.headers.contains("transfer-encoding")) {
+        return ParseResult::failure(request.headers.contains("content-length") ? ParseError::BAD_REQUEST
+                                                                               : ParseError::NOT_IMPLEMENTED);
+    }
     if (auto error = parse_content_length(request.headers, request.content_length)) {
         return ParseResult::failure(*error);
     }
