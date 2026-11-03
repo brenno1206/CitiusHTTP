@@ -197,3 +197,51 @@ TEST(RequestReaderTest, CorpoParadoDaTimeout) {
 
     EXPECT_EQ(read_request_body(par.servidor, "ab", 10).status, ReadStatus::TIMEOUT);
 }
+
+// ---- sobra de uma requisicao para a proxima (keep-alive) ----
+
+TEST(RequestReaderTest, CabecaCompletaEmInitialNaoLeDoSocket) {
+    auto par = novo_par();  // mudo: ler do socket daria timeout
+    ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
+
+    auto resultado = read_request_head(par.servidor, kLimite, "GET / HTTP/1.1\r\nHost: x\r\n\r\nSOBRA");
+
+    EXPECT_EQ(resultado.status, ReadStatus::COMPLETE);
+    EXPECT_EQ(resultado.data.substr(resultado.head_size), "SOBRA");
+}
+
+TEST(RequestReaderTest, InitialIncompletoEcompletadoPeloSocket) {
+    auto par = novo_par();
+    ASSERT_TRUE(par.cliente.send_all("t: x\r\n\r\n"));
+
+    auto resultado = read_request_head(par.servidor, kLimite, "GET / HTTP/1.1\r\nHos");
+
+    EXPECT_EQ(resultado.status, ReadStatus::COMPLETE);
+    EXPECT_EQ(resultado.data, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+}
+
+TEST(RequestReaderTest, DelimitadorPartidoEntreInitialESocket) {
+    auto par = novo_par();
+    ASSERT_TRUE(par.cliente.send_all("\n"));
+
+    auto resultado = read_request_head(par.servidor, kLimite, "GET / HTTP/1.1\r\n\r");
+
+    EXPECT_EQ(resultado.status, ReadStatus::COMPLETE);
+}
+
+TEST(RequestReaderTest, CabecaMaiorQueOLimiteJaEmInitialDa431) {
+    auto par = novo_par();
+    std::string cabeca = "GET / HTTP/1.1\r\nX: " + std::string(200, 'a') + "\r\n\r\n";
+
+    EXPECT_EQ(read_request_head(par.servidor, 64, cabeca).status, ReadStatus::TOO_LARGE);
+}
+
+TEST(RequestReaderTest, CorpoDevolveASobraDeInitial) {
+    auto par = novo_par();
+
+    auto resultado = read_request_body(par.servidor, "abcdeGET /", 5);
+
+    EXPECT_EQ(resultado.status, ReadStatus::COMPLETE);
+    EXPECT_EQ(resultado.data, "abcde");
+    EXPECT_EQ(resultado.surplus, "GET /");
+}

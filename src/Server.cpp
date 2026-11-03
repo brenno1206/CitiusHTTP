@@ -53,53 +53,84 @@ HttpResponse close_with(StatusCode status) {
     return response;
 }
 
-// Decide a resposta para o que foi lido do cliente; std::nullopt = nao ha a quem responder.
-// Le o corpo do socket quando a cabeca anuncia um Content-Length.
-std::optional<HttpResponse> build_response(const ReadResult& head, Socket& client, const Router& router) {
+// O que fazer depois de ler uma requisicao.
+struct Outcome {
+    std::optional<HttpResponse> response; ///< std::nullopt = nao ha a quem responder
+    bool keep_alive = false;              ///< true = esperar outra requisicao na mesma conexao
+    std::string surplus;                  ///< bytes ja lidos que pertencem a proxima requisicao
+};
+
+// Decide a resposta para o que foi lido do cliente. Le o corpo do socket quando a cabeca anuncia um
+// Content-Length. Todo erro fecha a conexao: depois dele nao sabemos mais onde a proxima requisicao
+// comeca, entao reaproveitar o fluxo seria arriscado.
+Outcome build_response(const ReadResult& head, Socket& client, const Router& router, bool may_keep_alive) {
     switch (head.status) {
         case ReadStatus::TOO_LARGE:
             log_info("(cabecalhos grandes demais) -> 431");
-            return HttpResponse::make_error(StatusCode::HEADERS_TOO_LARGE);
+            return {close_with(StatusCode::HEADERS_TOO_LARGE), false, {}};
         case ReadStatus::TIMEOUT:
             log_info("(cliente parado) -> 408");
-            return close_with(StatusCode::REQUEST_TIMEOUT);
+            return {close_with(StatusCode::REQUEST_TIMEOUT), false, {}};
         case ReadStatus::CLOSED:
+            // fim normal de uma conexao keep-alive: o cliente terminou e fechou
+            if (!head.data.empty()) log_info("(conexao encerrada antes de completar a requisicao)");
+            return {};
         case ReadStatus::ERROR:
-            log_info("(conexao encerrada antes de completar a requisicao)");
-            return std::nullopt;
+            log_info("(erro de leitura)");
+            return {};
         case ReadStatus::COMPLETE:
             break;
     }
 
-    // so a cabeca vai ao parser; o que veio depois dela e o comeco do corpo
+    // so a cabeca vai ao parser; o que veio depois dela e o comeco do corpo (ou da proxima requisicao)
     const std::string_view data{head.data};
     ParseResult parsed = HttpParser::parse(data.substr(0, head.head_size));
     if (!parsed.ok()) {
         StatusCode status = to_status(*parsed.error);
         log_info(std::format("(requisicao invalida) -> {}", static_cast<int>(status)));
-        return HttpResponse::make_error(status);
+        return {close_with(status), false, {}};
     }
 
+    std::string surplus(data.substr(head.head_size));
     if (parsed.request->content_length > 0) {
-        ReadResult body = read_request_body(client, data.substr(head.head_size), parsed.request->content_length);
+        ReadResult body = read_request_body(client, surplus, parsed.request->content_length);
         if (body.status == ReadStatus::TIMEOUT) {
             log_info("(corpo incompleto, cliente parado) -> 408");
-            return close_with(StatusCode::REQUEST_TIMEOUT);
+            return {close_with(StatusCode::REQUEST_TIMEOUT), false, {}};
         }
         if (body.status != ReadStatus::COMPLETE) {
             log_info("(conexao encerrada antes de completar o corpo)");
-            return std::nullopt;
+            return {};
         }
         parsed.request->body = std::move(body.data);
+        surplus = std::move(body.surplus);
     }
 
+    const bool keep_alive = may_keep_alive && parsed.request->keep_alive();
     HttpResponse response = route_safely(router, *parsed.request);
-    // fechamos a conexao apos cada resposta; a RFC pede que o servidor avise
-    (void)response.set_header("Connection", "close");
+    // a RFC pede que o servidor avise quando vai fechar; "keep-alive" explicito tambem serve ao HTTP/1.0
+    (void)response.set_header("Connection", keep_alive ? "keep-alive" : "close");
 
     log_info(std::format("{} {} -> {}", method_name(parsed.request->method), parsed.request->path,
                          static_cast<int>(response.status())));
-    return response;
+    return {std::move(response), keep_alive, std::move(surplus)};
+}
+
+// Espera chegar algo na conexao (a proxima requisicao, ou o fim dela). Faz poll em fatias curtas,
+// como accept_client, para notar o pedido de parada sem esperar o prazo todo.
+// @return true se ha dados para ler; false se estourou o prazo, pediram para parar ou deu erro.
+bool wait_for_next_request(const Socket& client, std::chrono::milliseconds idle, const std::atomic<bool>& stop) {
+    const auto deadline = std::chrono::steady_clock::now() + idle;
+    while (!stop.load()) {
+        auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        if (left <= std::chrono::milliseconds::zero()) return false;
+
+        pollfd pfd{.fd = client.get(), .events = POLLIN, .revents = 0};
+        int ready = poll(&pfd, 1, static_cast<int>(std::min<std::chrono::milliseconds::rep>(left.count(), kAcceptPollMs)));
+        if (ready > 0) return true; // dados, ou POLLHUP/POLLERR: o proximo recv descobre qual
+        if (ready < 0 && errno != EINTR) return false;
+    }
+    return false;
 }
 
 } // namespace
@@ -195,14 +226,35 @@ void Server::set_read_timeout(std::chrono::milliseconds timeout) noexcept {
     }
 }
 
+void Server::set_idle_timeout(std::chrono::milliseconds timeout) noexcept {
+    if (timeout > std::chrono::milliseconds::zero()) {
+        m_idle_timeout_ms.store(timeout.count());
+    }
+}
+
 void Server::handle_client(Socket& client) const {
     // por socket (como o SO_NOSIGPIPE); sem isso um cliente mudo prenderia a thread para sempre
     if (!client.set_recv_timeout(std::chrono::milliseconds(m_read_timeout_ms.load()))) {
         log_error("Falha ao definir o timeout de leitura no cliente.");
     }
-    std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes), client, m_router);
-    if (response && !client.send_all(response->serialize())) {
-        log_error("Falha ao enviar resposta.");
+
+    std::string carry; // bytes ja lidos que pertencem a proxima requisicao (requisicoes encadeadas)
+    for (std::size_t served = 0; served < kMaxRequestsPerConnection; ++served) {
+        // a primeira requisicao segue o timeout de leitura (silencio = 408). Nas seguintes, esperar
+        // calado e normal: nao ha requisicao a responder, so fechamos quando o prazo de ociosidade acaba
+        if (served > 0 && carry.empty() &&
+            !wait_for_next_request(client, std::chrono::milliseconds(m_idle_timeout_ms.load()), m_stop)) {
+            return;
+        }
+
+        const bool last = served + 1 == kMaxRequestsPerConnection || m_stop.load();
+        Outcome outcome = build_response(read_request_head(client, kMaxRequestHeadBytes, carry), client, m_router, !last);
+        if (outcome.response && !client.send_all(outcome.response->serialize())) {
+            log_error("Falha ao enviar resposta.");
+            return;
+        }
+        if (!outcome.keep_alive) return;
+        carry = std::move(outcome.surplus);
     }
 }
 

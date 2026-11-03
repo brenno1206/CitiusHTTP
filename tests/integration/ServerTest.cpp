@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <optional>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <stdexcept>
@@ -62,9 +63,16 @@ std::string ler_tudo(Socket& socket) {
     return recebido;
 }
 
+// Avisa que o cliente nao enviara mais nada (half-close). Com keep-alive o servidor espera a proxima
+// requisicao; ver o fim do envio faz ele encerrar a conexao, e so entao ler_tudo() termina.
+void terminar_envio(Socket& socket) {
+    EXPECT_EQ(::shutdown(socket.get(), SHUT_WR), 0);
+}
+
 // Atende um cliente: sobe serve_one() numa thread, envia os pedacos (com pausa entre eles) e
-// devolve a resposta completa.
-std::string requisitar(Server& server, const std::vector<std::string>& pedacos) {
+// devolve a resposta completa. Com @p encerrar_envio, faz half-close depois de enviar; passe false
+// para testar o servidor esperando algo que nunca chega (timeouts).
+std::string requisitar(Server& server, const std::vector<std::string>& pedacos, bool encerrar_envio = true) {
     std::thread servidor([&] { server.serve_one(); });
 
     Socket cliente = conectar(server.port());
@@ -72,13 +80,14 @@ std::string requisitar(Server& server, const std::vector<std::string>& pedacos) 
         EXPECT_TRUE(cliente.send_all(pedaco));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+    if (encerrar_envio) terminar_envio(cliente);
     std::string resposta = ler_tudo(cliente);
     servidor.join();
     return resposta;
 }
 
-std::string requisitar(Server& server, const std::string& raw) {
-    return requisitar(server, std::vector<std::string>{raw});
+std::string requisitar(Server& server, const std::string& raw, bool encerrar_envio = true) {
+    return requisitar(server, std::vector<std::string>{raw}, encerrar_envio);
 }
 
 bool comeca_com(const std::string& texto, const std::string& prefixo) {
@@ -89,6 +98,7 @@ bool comeca_com(const std::string& texto, const std::string& prefixo) {
 std::string requisitar_em(std::uint16_t port, const std::string& raw) {
     Socket cliente = conectar(port);
     EXPECT_TRUE(cliente.send_all(raw));
+    terminar_envio(cliente);
     return ler_tudo(cliente);
 }
 
@@ -129,7 +139,7 @@ TEST(ServerTest, ResponderGetValidoCom200) {
     EXPECT_EQ(resposta,
               "HTTP/1.1 200 OK\r\n"
               "Content-Type: text/html; charset=utf-8\r\n"
-              "Connection: close\r\n"
+              "Connection: keep-alive\r\n"
               "Content-Length: 13\r\n"
               "\r\n"
               "Hello Citius!");
@@ -282,7 +292,7 @@ TEST(ServerTest, RotaRegistradaResponde200) {
     std::string resposta = requisitar(server, "GET /ping HTTP/1.1\r\nHost: x\r\n\r\n");
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n"));
-    EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos);
+    EXPECT_NE(resposta.find("Connection: keep-alive\r\n"), std::string::npos);
     EXPECT_TRUE(resposta.ends_with("\r\n\r\npong"));
 }
 
@@ -429,7 +439,7 @@ TEST(ServerTest, ClienteMudoRecebe408ELiberaAThread) {
     server.set_read_timeout(std::chrono::milliseconds(100));
 
     // nao envia nada: sem timeout, o servidor ficaria esperando para sempre
-    std::string resposta = requisitar(server, std::vector<std::string>{});
+    std::string resposta = requisitar(server, std::vector<std::string>{}, false);
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
     EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos);
@@ -502,7 +512,7 @@ TEST(ServerTest, CorpoPrometidoMasNaoEnviadoDa408) {
     server.set_read_timeout(std::chrono::milliseconds(100));
     registrar_eco(server);
 
-    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    std::string resposta = requisitar(server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc", false);
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
 }
@@ -525,4 +535,211 @@ TEST(ServerTest, TransferEncodingMaisContentLengthDa400) {
         server, "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nhello");
 
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 400 Bad Request\r\n")) << resposta;
+}
+
+// ---- keep-alive ----
+
+namespace {
+
+// Le respostas HTTP, uma por vez, de uma conexao que continua aberta. Delimita cada resposta pelo
+// Content-Length (ler ate fechar nao serve: a conexao nao fecha). Bytes a mais ficam guardados.
+struct LeitorDeRespostas {
+    explicit LeitorDeRespostas(Socket& s) : socket{s} {}
+
+    // @return a resposta completa, ou "" se a conexao fechou antes (ou deu timeout) sem resposta.
+    std::string proxima() {
+        std::size_t fim_cabeca;
+        while ((fim_cabeca = buffer.find("\r\n\r\n")) == std::string::npos) {
+            if (!ler_mais()) return "";
+        }
+        fim_cabeca += 4;
+        std::size_t tamanho = 0;
+        if (auto pos = buffer.find("Content-Length: "); pos != std::string::npos && pos < fim_cabeca) {
+            tamanho = std::stoul(buffer.substr(pos + 16));
+        }
+        while (buffer.size() < fim_cabeca + tamanho) {
+            if (!ler_mais()) return "";
+        }
+        std::string resposta = buffer.substr(0, fim_cabeca + tamanho);
+        buffer.erase(0, fim_cabeca + tamanho);
+        return resposta;
+    }
+
+    // true se o servidor fechou a conexao (EOF) sem enviar mais nada.
+    bool fechada() { return buffer.empty() && !ler_mais(); }
+
+private:
+    bool ler_mais() {
+        std::array<char, 4096> tmp;
+        ssize_t n = socket.recv_some(tmp);
+        if (n <= 0) return false;
+        buffer.append(tmp.data(), static_cast<std::size_t>(n));
+        return true;
+    }
+
+    Socket& socket;
+    std::string buffer;
+};
+
+} // namespace
+
+TEST(ServerKeepAliveTest, DuasRequisicoesNaMesmaConexao) {
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    ASSERT_TRUE(cliente.send_all(kGetIndex));
+    std::string primeira = leitor.proxima();
+    ASSERT_TRUE(cliente.send_all(kGetIndex));  // mesma conexao: se o servidor tivesse fechado, falharia
+    std::string segunda = leitor.proxima();
+
+    EXPECT_TRUE(comeca_com(primeira, "HTTP/1.1 200 OK\r\n")) << primeira;
+    EXPECT_NE(primeira.find("Connection: keep-alive\r\n"), std::string::npos);
+    EXPECT_EQ(segunda, primeira);
+}
+
+TEST(ServerKeepAliveTest, RequisicoesEncadeadasNumUnicoEnvio) {
+    ServidorEmExecucao exec;
+    registrar_eco(exec.server);
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    // 3 requisicoes coladas (pipelining): a sobra de cada uma e o comeco da proxima
+    std::string post = "POST /eco HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc";
+    ASSERT_TRUE(cliente.send_all(post + kGetIndex + post));
+
+    std::string r1 = leitor.proxima();
+    std::string r2 = leitor.proxima();
+    std::string r3 = leitor.proxima();
+
+    EXPECT_TRUE(r1.ends_with("\r\n\r\nabc")) << r1;
+    EXPECT_TRUE(r2.ends_with("\r\n\r\nHello Citius!")) << r2;
+    EXPECT_TRUE(r3.ends_with("\r\n\r\nabc")) << r3;
+}
+
+TEST(ServerKeepAliveTest, ConnectionCloseFechaDepoisDaResposta) {
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    ASSERT_TRUE(cliente.send_all("GET /index.html HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+    std::string resposta = leitor.proxima();
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+    EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos);
+    EXPECT_TRUE(leitor.fechada());
+}
+
+TEST(ServerKeepAliveTest, Http10FechaPorPadrao) {
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    ASSERT_TRUE(cliente.send_all("GET /index.html HTTP/1.0\r\n\r\n"));
+    std::string resposta = leitor.proxima();
+
+    EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos) << resposta;
+    EXPECT_TRUE(leitor.fechada());
+}
+
+TEST(ServerKeepAliveTest, Http10ComKeepAliveContinuaAberta) {
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+    const std::string requisicao = "GET /index.html HTTP/1.0\r\nConnection: keep-alive\r\n\r\n";
+
+    ASSERT_TRUE(cliente.send_all(requisicao));
+    std::string primeira = leitor.proxima();
+    ASSERT_TRUE(cliente.send_all(requisicao));
+    std::string segunda = leitor.proxima();
+
+    EXPECT_NE(primeira.find("Connection: keep-alive\r\n"), std::string::npos) << primeira;
+    EXPECT_EQ(segunda, primeira);
+}
+
+TEST(ServerKeepAliveTest, RequisicaoInvalidaFechaAConexao) {
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    // depois de um erro nao sabemos mais onde a proxima requisicao comeca: fechar e o seguro
+    ASSERT_TRUE(cliente.send_all("LIXO\r\n\r\n"));
+    std::string resposta = leitor.proxima();
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 400 Bad Request\r\n")) << resposta;
+    EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos);
+    EXPECT_TRUE(leitor.fechada());
+}
+
+TEST(ServerKeepAliveTest, ErroNaSegundaRequisicaoNaoAfetaAPrimeira) {
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    ASSERT_TRUE(cliente.send_all(kGetIndex));
+    std::string ok = leitor.proxima();
+    ASSERT_TRUE(cliente.send_all("GET /nao-existe HTTP/1.1\r\nHost: x\r\n\r\n"));
+    std::string nao_achou = leitor.proxima();
+    ASSERT_TRUE(cliente.send_all(kGetIndex));  // 404 e resposta normal: a conexao segue viva
+    std::string de_novo = leitor.proxima();
+
+    EXPECT_TRUE(comeca_com(ok, "HTTP/1.1 200")) << ok;
+    EXPECT_TRUE(comeca_com(nao_achou, "HTTP/1.1 404")) << nao_achou;
+    EXPECT_EQ(de_novo, ok);
+}
+
+TEST(ServerKeepAliveTest, ConexaoOciosaFechaEmSilencio) {
+    ServidorEmExecucao exec;
+    exec.server.set_idle_timeout(std::chrono::milliseconds(150));
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    ASSERT_TRUE(cliente.send_all(kGetIndex));
+    ASSERT_FALSE(leitor.proxima().empty());
+
+    // nao envia a segunda: o servidor fecha sem mandar 408 (nao havia requisicao a responder)
+    EXPECT_TRUE(leitor.fechada());
+}
+
+TEST(ServerKeepAliveTest, OciosidadeLiberaAThreadParaOutroCliente) {
+    ServidorEmExecucao exec{1, 4};
+    exec.server.set_idle_timeout(std::chrono::milliseconds(150));
+    Socket ocioso = conectar(exec.server.port());
+    LeitorDeRespostas leitor{ocioso};
+    ASSERT_TRUE(ocioso.send_all(kGetIndex));
+    ASSERT_FALSE(leitor.proxima().empty());
+
+    // a unica thread esta presa ao 'ocioso' ate o prazo de ociosidade
+    std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+}
+
+TEST(ServerKeepAliveTest, ConexaoFechaNoLimiteDeRequisicoes) {
+    ServidorEmExecucao exec;
+    Socket cliente = conectar(exec.server.port());
+    LeitorDeRespostas leitor{cliente};
+
+    for (std::size_t i = 1; i <= citius::kMaxRequestsPerConnection; ++i) {
+        ASSERT_TRUE(cliente.send_all(kGetIndex));
+        std::string resposta = leitor.proxima();
+        bool ultima = i == citius::kMaxRequestsPerConnection;
+        EXPECT_NE(resposta.find(ultima ? "Connection: close\r\n" : "Connection: keep-alive\r\n"), std::string::npos)
+            << "requisicao " << i << ": " << resposta;
+    }
+    EXPECT_TRUE(leitor.fechada());
+}
+
+TEST(ServerKeepAliveTest, PedidoDeParadaFechaConexoesOciosas) {
+    std::optional<ServidorEmExecucao> exec;
+    exec.emplace();
+    Socket cliente = conectar(exec->server.port());  // continua aberto durante a parada
+    LeitorDeRespostas leitor{cliente};
+    ASSERT_TRUE(cliente.send_all(kGetIndex));
+    ASSERT_FALSE(leitor.proxima().empty());
+
+    auto inicio = std::chrono::steady_clock::now();
+    exec.reset();  // request_stop + join: sem o poll em fatias, esperaria o prazo de ociosidade (5 s)
+
+    EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::seconds(2));
 }

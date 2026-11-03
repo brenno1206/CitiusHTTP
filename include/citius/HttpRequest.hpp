@@ -1,4 +1,5 @@
 #pragma once
+#include "HttpSyntax.hpp"
 #include <cstddef>
 #include <functional>
 #include <map>
@@ -41,6 +42,30 @@ struct HttpRequest {
     Headers headers;
     std::size_t content_length = 0; ///< tamanho do corpo declarado em Content-Length (0 se ausente)
     std::string body;               ///< corpo; o HttpParser nao o preenche, quem le o socket o faz
+
+    /// @return true se a conexao pode ser reaproveitada depois desta requisicao (RFC 9112, 9.3):
+    ///         HTTP/1.1 e persistente, a menos que o cabecalho Connection tenha o token "close";
+    ///         HTTP/1.0 so e persistente com o token "keep-alive". "close" vence "keep-alive".
+    [[nodiscard]] bool keep_alive() const {
+        const bool persistent_by_default = version == "HTTP/1.1";
+        auto it = headers.find("connection");
+        if (it == headers.end()) return persistent_by_default;
+
+        bool has_close = false;
+        bool has_keep_alive = false;
+        std::string_view list = it->second;
+        while (!list.empty()) {
+            std::size_t comma = list.find(',');
+            std::string_view token = list.substr(0, comma);
+            list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+            while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) token.remove_prefix(1);
+            while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) token.remove_suffix(1);
+            has_close = has_close || iequals(token, "close");
+            has_keep_alive = has_keep_alive || iequals(token, "keep-alive");
+        }
+        if (has_close) return false;
+        return has_keep_alive || persistent_by_default;
+    }
 };
 
 } // namespace citius
