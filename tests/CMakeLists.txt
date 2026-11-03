@@ -18,6 +18,7 @@ add_executable(citius_tests
     unit/StaticPathTest.cpp
     unit/StaticFilesTest.cpp
     unit/RouterTest.cpp
+    unit/ThreadPoolTest.cpp
     unit/SocketTest.cpp
     unit/RequestReaderTest.cpp
     integration/ServerTest.cpp
