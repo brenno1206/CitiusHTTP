@@ -9,6 +9,7 @@ add_library(citius_core STATIC
     src/HttpParser.cpp
     src/HttpResponse.cpp
     src/Mime.cpp
+    src/StaticPath.cpp
     src/Socket.cpp
     src/RequestReader.cpp
     src/Server.cpp
