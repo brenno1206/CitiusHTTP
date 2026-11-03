@@ -565,6 +565,46 @@ TEST(ServerConcorrenciaTest, FaltaDeDescritoresNaoTravaAsConexoesAbertasEOServid
     EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
 }
 
+// A fila de prazos agenda cada conexao uma vez por periodo de timeout e reagenda quando o prazo e ADIADO. Se esse
+// reagendamento falhasse, uma conexao ativa seria fechada pela ociosidade no meio do uso.
+TEST(ServerConcorrenciaTest, ConexaoAtivaNaoEFechadaPelaOciosidade) {
+    ServidorEmExecucao exec;
+    exec.server.set_idle_timeout(std::chrono::milliseconds(100));
+    Socket cliente = conectar(exec.server.port());
+    std::array<char, 4096> buffer;
+
+    // uma requisicao a cada 40 ms durante ~800 ms: bem mais que o prazo de 100 ms, mas nunca 100 ms parada
+    for (int i = 0; i < 20; ++i) {
+        ASSERT_TRUE(cliente.send_all(kGetIndex)) << "requisicao " << i;
+        const ssize_t n = cliente.recv_some(buffer);
+        ASSERT_GT(n, 0) << "a conexao ativa foi fechada na requisicao " << i;
+        esperar(40);
+    }
+
+    // parou de usar: agora a ociosidade fecha (em silencio)
+    EXPECT_EQ(cliente.recv_some(buffer), 0);
+}
+
+TEST(ServerConcorrenciaTest, PrazosDeCentenasDeConexoesVencemTodosNoTempo) {
+    constexpr int kClientes = 300;
+    if (!elevar_limite_de_fds(2 * kClientes + 100)) GTEST_SKIP() << "nao foi possivel subir o limite de descritores";
+    ServidorEmExecucao exec;
+    exec.server.set_idle_timeout(std::chrono::milliseconds(150));
+    std::vector<Socket> clientes;
+    clientes.reserve(kClientes);
+    for (int i = 0; i < kClientes; ++i) clientes.push_back(conectar(exec.server.port()));
+    std::array<char, 4096> buffer;
+    for (auto& cliente : clientes) {
+        ASSERT_TRUE(cliente.send_all(kGetIndex));
+        ASSERT_GT(cliente.recv_some(buffer), 0);
+    }
+
+    // todas ficam ociosas; todas devem ser fechadas pelo servidor logo depois do prazo
+    const auto inicio = std::chrono::steady_clock::now();
+    for (int i = 0; i < kClientes; ++i) EXPECT_EQ(clientes[i].recv_some(buffer), 0) << "cliente " << i;
+    EXPECT_LT(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(1000));
+}
+
 TEST(ServerConcorrenciaTest, SlowlorisComUmByteDeVezEmQuandoRecebe408NoPrazoTotal) {
     ServidorEmExecucao exec;
     exec.server.set_read_timeout(std::chrono::milliseconds(300));

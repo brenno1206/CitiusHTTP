@@ -15,11 +15,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <iterator>
 #include <memory>
+#include <queue>
 #include <stdexcept> // Para lançar std::runtime_error
 #include <unordered_map>
 #include <utility> // std::move
+#include <vector>
 
 namespace citius {
 
@@ -44,7 +47,23 @@ constexpr std::chrono::milliseconds kMaxAcceptBackoff{1000};
 struct Entry {
     std::unique_ptr<Connection> conn;
     Interest registered;
+    // O prazo mais cedo que ja esta na fila de prazos para esta conexao (max() = nenhum). Serve para so agendar de
+    // novo quando o prazo ADIANTA: se ele so e adiado, a entrada antiga dispara, ve que ainda nao venceu e reagenda.
+    Connection::Clock::time_point scheduled = Connection::Clock::time_point::max();
 };
+
+// Um prazo agendado: "olhe a conexao do fd tal quando o relogio chegar em 'at'". Entradas de conexoes que ja fecharam
+// ficam na fila ate o instante chegar e sao ignoradas (custo: memoria por no maximo o maior prazo, ~30 s).
+struct TimerEntry {
+    Connection::Clock::time_point at;
+    int fd;
+
+    bool operator>(const TimerEntry& other) const {
+        return at > other.at;
+    }
+};
+
+using TimerQueue = std::priority_queue<TimerEntry, std::vector<TimerEntry>, std::greater<>>;
 
 using ConnectionMap = std::unordered_map<int, Entry>;
 
@@ -92,7 +111,7 @@ public:
     EventLoop(Listener& listener, bool single_client, std::size_t max_connections, Connection::Handler handler,
               TimeoutSettings timeouts, const std::atomic<bool>& stop)
         : m_listener(listener), m_single_client(single_client), m_max_connections(max_connections),
-          m_handler(std::move(handler)), m_timeouts(timeouts), m_stop(stop), m_next_sweep(Clock::now() + kLoopTick) {
+          m_handler(std::move(handler)), m_timeouts(timeouts), m_stop(stop) {
         if (!m_poller.add(m_listener.fd(), Interest::READ)) {
             throw std::runtime_error("Falha ao registrar o socket de escuta no Poller.");
         }
@@ -105,17 +124,39 @@ public:
             if (!m_accepting && m_connections.empty()) return;
 
             resume_accepting_if_due(Clock::now());
-            for (const PollEvent& event : m_poller.wait(kLoopTick)) handle_event(event, Clock::now());
-            sweep_deadlines(Clock::now());
+            for (const PollEvent& event : m_poller.wait(wait_timeout(Clock::now()))) handle_event(event, Clock::now());
+            run_due_timers(Clock::now());
         }
     }
 
 private:
     // Aplica @p fn a cada conexao e descarta as que fecharam (ou nao da mais para vigiar).
+    // Depois de mexer numa conexao: acompanha o interesse dela no Poller e, se o prazo dela adiantou, agenda o novo.
+    // @return false se ela fechou (ou nao da mais para vigiar) e deve ser descartada.
+    bool settle(Entry& entry) {
+        if (!sync_interest(m_poller, entry)) return false;
+        if (const auto deadline = entry.conn->deadline(); deadline && *deadline < entry.scheduled) {
+            m_timers.push({*deadline, entry.conn->fd()});
+            entry.scheduled = *deadline;
+        }
+        return true;
+    }
+
+    // Quanto o poll pode esperar: ate o proximo prazo (ou a retomada do accept), no maximo kLoopTick para notar
+    // request_stop() (que so grava um atomic e nao acorda o Poller). Arredonda para cima: esperar 0 ms por um prazo
+    // a 0,3 ms de distancia viraria um laco de polls vazios.
+    std::chrono::milliseconds wait_timeout(Clock::time_point now) const {
+        Clock::time_point wake = now + kLoopTick;
+        if (!m_timers.empty()) wake = std::min(wake, m_timers.top().at);
+        if (m_accepting && !m_listener_watched) wake = std::min(wake, m_accept_resume_at);
+        if (wake <= now) return std::chrono::milliseconds::zero();
+        return std::chrono::ceil<std::chrono::milliseconds>(wake - now);
+    }
+
     template <typename Fn> void update_all(Fn&& fn) {
         for (auto it = m_connections.begin(); it != m_connections.end();) {
             fn(*it->second.conn);
-            it = sync_interest(m_poller, it->second) ? std::next(it) : m_connections.erase(it);
+            it = settle(it->second) ? std::next(it) : m_connections.erase(it);
         }
     }
 
@@ -204,7 +245,8 @@ private:
             log_warn("Falha ao registrar o cliente no Poller.");
             return; // o destrutor de 'conn' fecha o fd
         }
-        m_connections.emplace(conn_fd, Entry{std::move(conn), Interest::READ});
+        const auto emplaced = m_connections.emplace(conn_fd, Entry{std::move(conn), Interest::READ});
+        (void)settle(emplaced.first->second);  // agenda o primeiro prazo (a primeira requisicao tem read_timeout)
         if (m_single_client) stop_accepting(); // serve_one atende um cliente so
     }
 
@@ -220,14 +262,24 @@ private:
         if (event.readable) conn.on_readable(now);
         // "closed" sem "writable" acontece quando o par some durante o envio: on_writable descobre pelo erro do send
         if (!conn.closed() && (event.writable || event.closed)) conn.on_writable(now);
-        if (!sync_interest(m_poller, it->second)) m_connections.erase(it);
+        if (!settle(it->second)) m_connections.erase(it);
     }
 
-    // Prazos: varredura periodica, nao a cada evento (com milhares de conexoes seria custo por evento).
-    void sweep_deadlines(Clock::time_point now) {
-        if (now < m_next_sweep) return;
-        m_next_sweep = now + kLoopTick;
-        update_all([now](Connection& conn) { conn.check_deadline(now); });
+    // Dispara os prazos vencidos. Cada conexao tem no maximo uma entrada "viva" (Entry::scheduled); ao vencer, a
+    // conexao confere o prazo REAL dela (check_deadline nao faz nada se ele ja foi adiado) e settle() reagenda. Assim o
+    // custo e de ~1 operacao de heap por conexao a cada periodo de timeout, e nao uma por requisicao nem uma varredura
+    // de todas.
+    void run_due_timers(Clock::time_point now) {
+        while (!m_timers.empty() && m_timers.top().at <= now) {
+            const TimerEntry due = m_timers.top();
+            m_timers.pop();
+            const auto it = m_connections.find(due.fd);
+            if (it == m_connections.end() || it->second.scheduled != due.at)
+                continue; // fechou, ou ha entrada mais nova
+            it->second.scheduled = Clock::time_point::max();
+            it->second.conn->check_deadline(now);
+            if (!settle(it->second)) m_connections.erase(it);
+        }
     }
 
     Poller m_poller;
@@ -243,7 +295,7 @@ private:
     std::chrono::milliseconds m_accept_backoff{0};
     Clock::time_point m_accept_resume_at;
     bool m_draining = false;
-    Clock::time_point m_next_sweep;
+    TimerQueue m_timers;
 };
 
 // Validado antes de o Listener abrir a porta: um argumento invalido nao deve deixar uma porta aberta por um instante.
