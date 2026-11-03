@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <stdexcept>
@@ -83,6 +84,34 @@ std::string requisitar(Server& server, const std::string& raw) {
 bool comeca_com(const std::string& texto, const std::string& prefixo) {
     return texto.rfind(prefixo, 0) == 0;
 }
+
+// Conecta, envia a requisicao inteira e le a resposta. Para servidores que ja estao em run().
+std::string requisitar_em(std::uint16_t port, const std::string& raw) {
+    Socket cliente = conectar(port);
+    EXPECT_TRUE(cliente.send_all(raw));
+    return ler_tudo(cliente);
+}
+
+void esperar(int milissegundos) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(milissegundos));
+}
+
+// Servidor com run() numa thread. O destrutor pede a parada e espera: como o pool espera os clientes
+// em andamento, os clientes do teste precisam ser fechados ANTES (declare-os depois deste objeto).
+struct ServidorEmExecucao {
+    explicit ServidorEmExecucao(std::size_t threads = 2, std::size_t fila = 128)
+        : server{0, raiz_de_teste(), threads, fila}, thread{[this] { server.run(); }} {}
+
+    ~ServidorEmExecucao() {
+        server.request_stop();
+        thread.join();
+    }
+
+    Server server;
+    std::thread thread;
+};
+
+constexpr const char* kGetIndex = "GET /index.html HTTP/1.1\r\nHost: x\r\n\r\n";
 
 } // namespace
 
@@ -300,4 +329,97 @@ TEST(ServerTest, HandlerQueLancaExcecaoDa500EOServidorContinua) {
     EXPECT_EQ(resposta.find("bug no handler"), std::string::npos); // nao vaza detalhe interno ao cliente
     // o proximo cliente e atendido normalmente
     EXPECT_TRUE(comeca_com(requisitar(server, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"), "HTTP/1.1 200 OK\r\n"));
+}
+
+TEST(ServerConcorrenciaTest, ClienteMudoNaoBloqueiaOsOutros) {
+    ServidorEmExecucao em_execucao{2};
+    Socket mudo = conectar(em_execucao.server.port()); // conecta e nao envia nada
+    esperar(100);
+
+    std::string resposta = requisitar_em(em_execucao.server.port(), kGetIndex);
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n"));
+}
+
+TEST(ServerConcorrenciaTest, MuitosClientesAoMesmoTempo) {
+    ServidorEmExecucao em_execucao{4};
+    constexpr int kClientes = 32;
+    std::vector<std::string> respostas(kClientes);
+
+    std::vector<std::thread> clientes;
+    for (int i = 0; i < kClientes; ++i) {
+        clientes.emplace_back([&, i] { respostas[i] = requisitar_em(em_execucao.server.port(), kGetIndex); });
+    }
+    for (auto& cliente : clientes) {
+        cliente.join();
+    }
+
+    for (const auto& resposta : respostas) {
+        EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n"));
+        EXPECT_TRUE(resposta.ends_with("\r\n\r\nHello Citius!"));
+    }
+}
+
+TEST(ServerConcorrenciaTest, FilaCheiaResponde503EDepoisSeRecupera) {
+    // 1 thread e fila de 1: o primeiro mudo ocupa a thread, o segundo ocupa a fila, o terceiro leva 503
+    ServidorEmExecucao em_execucao{1, 1};
+    std::string rejeitada;
+    {
+        Socket mudo1 = conectar(em_execucao.server.port());
+        esperar(150);
+        Socket mudo2 = conectar(em_execucao.server.port());
+        esperar(150);
+
+        rejeitada = requisitar_em(em_execucao.server.port(), kGetIndex);
+    } // fecha os mudos: o pool desocupa
+
+    EXPECT_TRUE(comeca_com(rejeitada, "HTTP/1.1 503 Service Unavailable\r\n"));
+    EXPECT_NE(rejeitada.find("Retry-After: 1\r\n"), std::string::npos);
+    EXPECT_NE(rejeitada.find("Connection: close\r\n"), std::string::npos);
+
+    // depois que os mudos saem, o servidor volta a atender
+    EXPECT_TRUE(comeca_com(requisitar_em(em_execucao.server.port(), kGetIndex), "HTTP/1.1 200 OK\r\n"));
+}
+
+TEST(ServerConcorrenciaTest, RequestStopFazRunRetornar) {
+    Server server{0, raiz_de_teste()};
+    std::future<void> terminou = std::async(std::launch::async, [&] { server.run(); });
+    esperar(150);
+
+    server.request_stop();
+
+    EXPECT_EQ(terminou.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+}
+
+TEST(ServerConcorrenciaTest, ParadaTerminaOClienteEmAndamento) {
+    Server server{0, raiz_de_teste()};
+    std::future<void> terminou = std::async(std::launch::async, [&] { server.run(); });
+
+    Socket cliente = conectar(server.port());
+    EXPECT_TRUE(cliente.send_all("GET /index.html HTTP/1.1\r\nHost: x\r\n")); // requisicao incompleta
+    esperar(150);                                                                  // servidor ja aceitou
+
+    server.request_stop();
+    esperar(250); // run() ja saiu do laco de accept e esta esperando este cliente
+    EXPECT_NE(terminou.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
+
+    EXPECT_TRUE(cliente.send_all("\r\n")); // completa a requisicao depois do pedido de parada
+    std::string resposta = ler_tudo(cliente);
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n"));
+    EXPECT_EQ(terminou.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+}
+
+TEST(ServerConcorrenciaTest, AposAParadaNaoAceitaMaisConexoes) {
+    Server server{0, raiz_de_teste()};
+    server.request_stop();
+
+    server.run(); // retorna na hora: ninguem a atender
+
+    server.serve_one(); // idem, sem bloquear esperando cliente
+    SUCCEED();
+}
+
+TEST(ServerConcorrenciaTest, FilaZeroLancaExcecao) {
+    EXPECT_THROW((Server{0, raiz_de_teste(), 2, 0}), std::invalid_argument);
 }

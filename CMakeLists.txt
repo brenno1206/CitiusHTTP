@@ -4,6 +4,9 @@ project(CitiusHTTP LANGUAGES CXX)
 # Sanitizers (ASan + UBSan): cmake -S . -B build-asan -DCITIUS_SANITIZE=ON
 option(CITIUS_SANITIZE "Compila com AddressSanitizer e UndefinedBehaviorSanitizer" OFF)
 
+# ThreadSanitizer (detecta corridas de dados): cmake -S . -B build-tsan -DCITIUS_TSAN=ON
+option(CITIUS_TSAN "Compila com ThreadSanitizer (nao combina com CITIUS_SANITIZE)" OFF)
+
 # Biblioteca com quase todo o código (sem main), reaproveitada pelo servidor e pelos testes
 add_library(citius_core STATIC
     src/HttpParser.cpp
@@ -12,6 +15,8 @@ add_library(citius_core STATIC
     src/StaticPath.cpp
     src/StaticFiles.cpp
     src/Router.cpp
+    src/ThreadPool.cpp
+    src/Log.cpp
     src/Socket.cpp
     src/RequestReader.cpp
     src/Server.cpp
@@ -27,10 +32,17 @@ target_include_directories(citius_core PUBLIC include)
 
 # Habilitando os warnings do compilador para manter um código limpo
 target_compile_options(citius_core PRIVATE -Wall -Wextra -Wpedantic)
+if(CITIUS_SANITIZE AND CITIUS_TSAN)
+    message(FATAL_ERROR "CITIUS_SANITIZE e CITIUS_TSAN sao incompativeis: o ThreadSanitizer nao combina com o AddressSanitizer. Use um diretorio de build para cada.")
+endif()
 if(CITIUS_SANITIZE)
     # PUBLIC: quem linka a biblioteca tambem precisa linkar com o sanitizer
     target_compile_options(citius_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(citius_core PUBLIC -fsanitize=address,undefined)
+endif()
+if(CITIUS_TSAN)
+    target_compile_options(citius_core PUBLIC -fsanitize=thread -fno-omit-frame-pointer)
+    target_link_options(citius_core PUBLIC -fsanitize=thread)
 endif()
 
 # Executavel fino: so o main, ligado a biblioteca
