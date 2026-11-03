@@ -151,12 +151,12 @@ void Server::start(std::uint16_t port) {
     m_server_socket.reset(socket(AF_INET, SOCK_STREAM, 0));
 
     if(!m_server_socket.valid()) {
-        throw std::runtime_error("Erro na criacao do socket\n");
+        throw std::runtime_error("Erro na criacao do socket");
     }
 
     // precisa vir antes do bind, senao reiniciar o servidor falha com "Address already in use"
     if(!m_server_socket.set_reuse_addr()) {
-        throw std::runtime_error("Falha ao definir SO_REUSEADDR.\n");
+        throw std::runtime_error("Falha ao definir SO_REUSEADDR.");
     }
 
     sockaddr_in address{
@@ -165,20 +165,20 @@ void Server::start(std::uint16_t port) {
         .sin_addr = { .s_addr = INADDR_ANY }  // aceita conexoes em qualquer interface da maquina
     };
     if(bind(m_server_socket.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
-        throw std::runtime_error("Erro no bind.\n");
+        throw std::runtime_error("Erro no bind.");
     }
 
     // fila de conexoes aguardando accept(). Com 10, uma rajada de ~30 clientes perdia conexoes no macOS
     // (o cliente via a conexao cair sem resposta); SOMAXCONN pede o maximo que o SO permite
     if(listen(m_server_socket.get(), SOMAXCONN) < 0) {
-        throw std::runtime_error("Falha no listen.\n");
+        throw std::runtime_error("Falha no listen.");
     }
 
     // com porta 0 so agora o sistema sabe qual porta escolheu
     sockaddr_in bound{};
     socklen_t bound_size = sizeof(bound);
     if(getsockname(m_server_socket.get(), reinterpret_cast<sockaddr*>(&bound), &bound_size) < 0) {
-        throw std::runtime_error("Falha no getsockname.\n");
+        throw std::runtime_error("Falha no getsockname.");
     }
     m_port = ntohs(bound.sin_port);
 

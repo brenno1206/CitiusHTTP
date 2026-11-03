@@ -17,6 +17,7 @@ add_library(citius_core STATIC
     src/Router.cpp
     src/ThreadPool.cpp
     src/Logger.cpp
+    src/Config.cpp
     src/Socket.cpp
     src/RequestReader.cpp
     src/Server.cpp
