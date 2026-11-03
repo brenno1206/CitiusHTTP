@@ -10,6 +10,7 @@ enum class ReadStatus {
     COMPLETE,  ///< chegou o fim dos cabecalhos (\r\n\r\n)
     CLOSED,    ///< o cliente fechou a conexao antes de completar
     TOO_LARGE, ///< passou do limite sem terminar os cabecalhos (responder 431)
+    TIMEOUT,   ///< o prazo de leitura do socket estourou (responder 408)
     ERROR      ///< falha do sistema (recv)
 };
 
@@ -23,6 +24,8 @@ struct ReadResult {
 /// O TCP nao preserva fronteiras de mensagem, entao a requisicao pode chegar em varios
 /// pedacos (ate com o delimitador partido ao meio). Todo byte recebido e mantido em
 /// ReadResult::data, inclusive os que vierem depois dos cabecalhos.
+///
+/// Se o socket tiver prazo (Socket::set_recv_timeout), um cliente parado resulta em TIMEOUT.
 ///
 /// @param socket     conexao do cliente
 /// @param max_bytes  teto para o total lido; protege contra clientes que nunca terminam

@@ -1,5 +1,7 @@
 #include "citius/Socket.hpp"
 #include <array>
+#include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
@@ -194,4 +196,24 @@ TEST(SocketTest, RecvSomeDevolveErroEmSocketInvalido) {
 
     EXPECT_EQ(socket.recv_some(buffer), -1);
     EXPECT_FALSE(socket.send_all("x"));
+}
+
+TEST(SocketTest, RecvTimeoutFazRecvSomeFalharComEagain) {
+    int fds[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    Socket emissor{fds[0]};  // fica aberto e mudo
+    Socket receptor{fds[1]};
+    ASSERT_TRUE(receptor.set_recv_timeout(std::chrono::milliseconds(50)));
+
+    std::array<char, 16> buffer;
+    auto inicio = std::chrono::steady_clock::now();
+    EXPECT_EQ(receptor.recv_some(buffer), -1);
+    EXPECT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
+    EXPECT_GE(std::chrono::steady_clock::now() - inicio, std::chrono::milliseconds(40));
+}
+
+TEST(SocketTest, SetRecvTimeoutFalhaEmSocketInvalido) {
+    Socket socket;
+
+    EXPECT_FALSE(socket.set_recv_timeout(std::chrono::milliseconds(50)));
 }

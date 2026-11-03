@@ -1,6 +1,7 @@
 #include "citius/Socket.hpp"
 #include <cerrno>
 #include <sys/socket.h> // setsockopt(), send(), recv()
+#include <sys/time.h>   // struct timeval
 #include <unistd.h>     // close()
 #include <utility>
 
@@ -43,6 +44,17 @@ bool Socket::set_no_sigpipe() noexcept {
 #else
     return true; // Linux: protegido por MSG_NOSIGNAL em cada send
 #endif
+}
+
+bool Socket::set_recv_timeout(std::chrono::milliseconds timeout) noexcept {
+    // timeval zerado desliga o timeout no SO_RCVTIMEO; por isso recusamos prazo <= 0
+    if (timeout <= std::chrono::milliseconds::zero()) {
+        return false;
+    }
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(timeout);
+    auto usecs = std::chrono::duration_cast<std::chrono::microseconds>(timeout - secs);
+    timeval tv{.tv_sec = static_cast<time_t>(secs.count()), .tv_usec = static_cast<suseconds_t>(usecs.count())};
+    return ::setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
 }
 
 bool Socket::send_all(std::string_view data) noexcept {

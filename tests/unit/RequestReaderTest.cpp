@@ -118,3 +118,23 @@ TEST(RequestReaderTest, SocketInvalidoDaErro) {
 
     EXPECT_EQ(read_request_head(invalido, kLimite).status, ReadStatus::ERROR);
 }
+
+TEST(RequestReaderTest, ClienteMudoDaTimeout) {
+    auto par = novo_par();  // 'cliente' fica aberto e nao envia nada
+    ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
+
+    auto resultado = read_request_head(par.servidor, kLimite);
+
+    EXPECT_EQ(resultado.status, ReadStatus::TIMEOUT);
+}
+
+TEST(RequestReaderTest, TimeoutNoMeioDaRequisicaoMantemOsBytesLidos) {
+    auto par = novo_par();
+    ASSERT_TRUE(par.servidor.set_recv_timeout(std::chrono::milliseconds(50)));
+    ASSERT_TRUE(par.cliente.send_all("GET / HTTP/1.1\r\nHo"));
+
+    auto resultado = read_request_head(par.servidor, kLimite);
+
+    EXPECT_EQ(resultado.status, ReadStatus::TIMEOUT);
+    EXPECT_EQ(resultado.data, "GET / HTTP/1.1\r\nHo");
+}

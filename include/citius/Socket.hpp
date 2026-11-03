@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <span>
 #include <string_view>
 #include <sys/types.h> // ssize_t
@@ -53,13 +54,20 @@ public:
     /// @return false se a opcao nao pode ser definida.
     [[nodiscard]] bool set_no_sigpipe() noexcept;
 
+    /// Define quanto tempo um recv() pode esperar dados (SO_RCVTIMEO). Passado o prazo, recv_some()
+    /// devolve -1 com errno == EAGAIN/EWOULDBLOCK. O prazo vale para cada recv, nao para a
+    /// requisicao inteira. Prazo zero ou negativo e recusado (zero significaria "sem limite").
+    /// @return false se a opcao nao pode ser definida.
+    [[nodiscard]] bool set_recv_timeout(std::chrono::milliseconds timeout) noexcept;
+
     /// Envia todos os bytes de @p data, repetindo send() em envios parciais e em EINTR.
     /// @return false se a conexao falhou (ex.: o cliente fechou) antes de enviar tudo.
     [[nodiscard]] bool send_all(std::string_view data) noexcept;
 
     /// Le ate buffer.size() bytes com um unico recv() (repete apenas em EINTR).
     /// Pode devolver menos do que o pedido: o TCP nao preserva fronteiras de mensagem.
-    /// @return bytes lidos; 0 se o par fechou a conexao; -1 em erro.
+    /// @return bytes lidos; 0 se o par fechou a conexao; -1 em erro (errno == EAGAIN/EWOULDBLOCK se
+    ///         o prazo de set_recv_timeout() estourou).
     [[nodiscard]] ssize_t recv_some(std::span<char> buffer) noexcept;
 
 private:

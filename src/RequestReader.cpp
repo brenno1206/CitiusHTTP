@@ -1,6 +1,7 @@
 #include "citius/RequestReader.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <string_view>
 
 namespace citius {
@@ -16,7 +17,9 @@ ReadResult read_request_head(Socket& socket, std::size_t max_bytes) {
     while (true) {
         ssize_t received = socket.recv_some(buffer);
         if (received < 0) {
-            result.status = ReadStatus::ERROR;
+            // EAGAIN e EWOULDBLOCK: o SO_RCVTIMEO estourou (podem ser valores iguais ou diferentes)
+            bool timed_out = errno == EAGAIN || errno == EWOULDBLOCK;
+            result.status = timed_out ? ReadStatus::TIMEOUT : ReadStatus::ERROR;
             return result;
         }
         if (received == 0) {

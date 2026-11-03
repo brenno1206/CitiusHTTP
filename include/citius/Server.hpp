@@ -3,11 +3,15 @@
 #include "citius/Router.hpp"
 #include "citius/Socket.hpp"
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 
 namespace citius {
+
+/// Quanto tempo esperar por dados de um cliente antes de responder 408 (padrao).
+inline constexpr std::chrono::milliseconds kDefaultReadTimeout{10000};
 
 /// Quantos clientes aceitos podem esperar por uma thread livre em run() (padrao).
 inline constexpr std::size_t kDefaultMaxQueuedClients = 128;
@@ -34,6 +38,11 @@ public:
     /// Registre as rotas antes de chamar run()/serve_one() (o Router nao e thread-safe para escrita).
     /// Um handler que lance excecao vira resposta 500; o servidor continua de pe.
     [[nodiscard]] Router& router() noexcept { return m_router; }
+
+    /// Define o prazo de cada leitura de um cliente (ver Socket::set_recv_timeout); estourou, o
+    /// cliente recebe 408 e a conexao fecha. Vale para os clientes aceitos depois da chamada e pode
+    /// ser chamado de qualquer thread. Prazo <= 0 e ignorado.
+    void set_read_timeout(std::chrono::milliseconds timeout) noexcept;
 
     /// Espera um cliente, le a requisicao, responde e fecha a conexao, tudo na thread que chamou.
     /// Falhas de um cliente (conexao cortada, requisicao invalida) nao lancam: sao registradas.
@@ -67,6 +76,7 @@ private:
     Router m_router;              ///< rotas registradas + fallback para m_root
     std::size_t m_threads;        ///< tamanho do pool de run()
     std::size_t m_max_queued;     ///< fila de espera do pool de run()
+    std::atomic<std::chrono::milliseconds::rep> m_read_timeout_ms{kDefaultReadTimeout.count()};
     std::atomic<bool> m_stop = false;
     static_assert(std::atomic<bool>::is_always_lock_free, "request_stop() precisa ser seguro em handler de sinal");
 };

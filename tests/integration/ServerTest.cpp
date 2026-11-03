@@ -423,3 +423,25 @@ TEST(ServerConcorrenciaTest, AposAParadaNaoAceitaMaisConexoes) {
 TEST(ServerConcorrenciaTest, FilaZeroLancaExcecao) {
     EXPECT_THROW((Server{0, raiz_de_teste(), 2, 0}), std::invalid_argument);
 }
+
+TEST(ServerTest, ClienteMudoRecebe408ELiberaAThread) {
+    Server server{0, raiz_de_teste()};
+    server.set_read_timeout(std::chrono::milliseconds(100));
+
+    // nao envia nada: sem timeout, o servidor ficaria esperando para sempre
+    std::string resposta = requisitar(server, std::vector<std::string>{});
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 408 Request Timeout\r\n")) << resposta;
+    EXPECT_NE(resposta.find("Connection: close\r\n"), std::string::npos);
+}
+
+TEST(ServerTest, ClienteMudoNaoPrendeOUnicoSlotDoPool) {
+    ServidorEmExecucao exec{1, 4};
+    exec.server.set_read_timeout(std::chrono::milliseconds(100));
+    Socket mudo = conectar(exec.server.port());
+
+    // a unica thread esta com o cliente mudo; depois do timeout ela atende o proximo
+    std::string resposta = requisitar_em(exec.server.port(), kGetIndex);
+
+    EXPECT_TRUE(comeca_com(resposta, "HTTP/1.1 200 OK\r\n")) << resposta;
+}

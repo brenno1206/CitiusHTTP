@@ -52,6 +52,12 @@ std::optional<HttpResponse> build_response(const ReadResult& head, const Router&
         case ReadStatus::TOO_LARGE:
             log_info("(cabecalhos grandes demais) -> 431");
             return HttpResponse::make_error(StatusCode::HEADERS_TOO_LARGE);
+        case ReadStatus::TIMEOUT: {
+            log_info("(cliente parado) -> 408");
+            HttpResponse timeout = HttpResponse::make_error(StatusCode::REQUEST_TIMEOUT);
+            (void)timeout.set_header("Connection", "close");
+            return timeout;
+        }
         case ReadStatus::CLOSED:
         case ReadStatus::ERROR:
             log_info("(conexao encerrada antes de completar a requisicao)");
@@ -162,7 +168,17 @@ Socket Server::accept_client() {
     return Socket{};
 }
 
+void Server::set_read_timeout(std::chrono::milliseconds timeout) noexcept {
+    if (timeout > std::chrono::milliseconds::zero()) {
+        m_read_timeout_ms.store(timeout.count());
+    }
+}
+
 void Server::handle_client(Socket& client) const {
+    // por socket (como o SO_NOSIGPIPE); sem isso um cliente mudo prenderia a thread para sempre
+    if (!client.set_recv_timeout(std::chrono::milliseconds(m_read_timeout_ms.load()))) {
+        log_error("Falha ao definir o timeout de leitura no cliente.");
+    }
     std::optional<HttpResponse> response = build_response(read_request_head(client, kMaxRequestHeadBytes), m_router);
     if (response && !client.send_all(response->serialize())) {
         log_error("Falha ao enviar resposta.");
