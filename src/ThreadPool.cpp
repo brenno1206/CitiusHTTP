@@ -1,5 +1,5 @@
 #include "citius/ThreadPool.hpp"
-#include "citius/Log.hpp"
+#include "citius/Logger.hpp"
 #include <exception>
 #include <format>
 #include <stdexcept>

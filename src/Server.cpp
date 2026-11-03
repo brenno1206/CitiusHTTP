@@ -1,7 +1,7 @@
 #include "citius/Server.hpp"
 #include "citius/HttpParser.hpp"
 #include "citius/HttpResponse.hpp"
-#include "citius/Log.hpp"
+#include "citius/Logger.hpp"
 #include "citius/RequestReader.hpp"
 #include "citius/StaticFiles.hpp"
 #include <arpa/inet.h>  // ntohs()
