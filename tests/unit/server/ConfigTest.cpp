@@ -1,8 +1,11 @@
 #include "citius/server/Config.hpp"
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
 using citius::Config;
@@ -147,6 +150,228 @@ TEST(ConfigTest, TextoDeUsoCitaTodasAsOpcoes) {
 
     for (const char* opcao : {"citius_server", "--port", "--root", "--max-connections", "--max-requests",
                               "--read-timeout-ms", "--idle-timeout-ms", "--log-level", "--help"}) {
+        EXPECT_NE(uso.find(opcao), std::string::npos) << opcao;
+    }
+}
+
+// ---- opcoes de log -----------------------------------------------------------------------------------------------
+
+TEST(ConfigTest, LogEmArquivoVemDesligadoPorPadrao) {
+    ConfigResult r = parse({});
+
+    EXPECT_FALSE(r.config.log_file.has_value());
+    EXPECT_EQ(r.config.log_max_bytes, citius::kDefaultLogMaxBytes);
+    EXPECT_EQ(r.config.log_keep, citius::kDefaultLogKeep);
+}
+
+TEST(ConfigTest, LeAsOpcoesDeLogEmArquivo) {
+    ConfigResult r = parse({"--log-file", "/var/log/citius.log", "--log-max-bytes", "2048", "--log-keep", "3"});
+
+    ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
+    ASSERT_TRUE(r.config.log_file.has_value());
+    EXPECT_EQ(*r.config.log_file, "/var/log/citius.log");
+    EXPECT_EQ(r.config.log_max_bytes, 2048u);
+    EXPECT_EQ(r.config.log_keep, 3u);
+}
+
+TEST(ConfigTest, LimitesDoLogEmArquivo) {
+    espera_erro({"--log-file", ""}, "--log-file");
+    EXPECT_EQ(parse({"--log-max-bytes", "1024"}).status, ParseStatus::OK);
+    espera_erro({"--log-max-bytes", "1023"}, "--log-max-bytes");
+    EXPECT_EQ(parse({"--log-max-bytes", "1073741824"}).status, ParseStatus::OK); // 1 GiB
+    espera_erro({"--log-max-bytes", "1073741825"}, "--log-max-bytes");
+    EXPECT_EQ(parse({"--log-keep", "0"}).status, ParseStatus::OK); // 0 = nao guardar antigos
+    espera_erro({"--log-keep", "1001"}, "--log-keep");
+}
+
+// ---- arquivo de configuracao (--config) -------------------------------------------------------------------------
+
+namespace {
+
+// Escreve um arquivo de configuracao temporario (removido no destrutor) e devolve o caminho.
+class ArquivoDeConfig {
+public:
+    explicit ArquivoDeConfig(const std::string& conteudo)
+        : m_path(std::filesystem::temp_directory_path() /
+                 ("citius_cfg_" + std::to_string(::getpid()) + "_" +
+                  ::testing::UnitTest::GetInstance()->current_test_info()->name() + ".conf")) {
+        std::ofstream{m_path, std::ios::binary} << conteudo;
+    }
+    ~ArquivoDeConfig() {
+        std::error_code ignorado;
+        std::filesystem::remove(m_path, ignorado);
+    }
+    ArquivoDeConfig(const ArquivoDeConfig&) = delete;
+    ArquivoDeConfig& operator=(const ArquivoDeConfig&) = delete;
+
+    [[nodiscard]] std::string path() const {
+        return m_path.string();
+    }
+
+private:
+    std::filesystem::path m_path;
+};
+
+} // namespace
+
+TEST(ConfigArquivoTest, ArquivoDefineAsOpcoes) {
+    ArquivoDeConfig arquivo{
+        "port = 9000\nroot = /srv/site\nmax-connections = 500\nmax-requests = 50\nread-timeout-ms = 2000\n"
+        "idle-timeout-ms = 700\nlog-level = debug\nlog-file = /tmp/citius.log\nlog-max-bytes = 4096\nlog-keep = 2\n"};
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
+    EXPECT_EQ(r.config.port, 9000);
+    EXPECT_EQ(r.config.root, "/srv/site");
+    EXPECT_EQ(r.config.max_connections, 500u);
+    EXPECT_EQ(r.config.max_requests, 50u);
+    EXPECT_EQ(r.config.read_timeout, std::chrono::milliseconds(2000));
+    EXPECT_EQ(r.config.idle_timeout, std::chrono::milliseconds(700));
+    EXPECT_EQ(r.config.log_level, LogLevel::DEBUG);
+    ASSERT_TRUE(r.config.log_file.has_value());
+    EXPECT_EQ(*r.config.log_file, "/tmp/citius.log");
+    EXPECT_EQ(r.config.log_max_bytes, 4096u);
+    EXPECT_EQ(r.config.log_keep, 2u);
+}
+
+TEST(ConfigArquivoTest, AceitaFormaComIgual) {
+    ArquivoDeConfig arquivo{"port = 9001\n"};
+
+    ConfigResult r = parse({std::string("--config=") + arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
+    EXPECT_EQ(r.config.port, 9001);
+}
+
+TEST(ConfigArquivoTest, ComentariosLinhasEmBrancoEspacosECrLf) {
+    ArquivoDeConfig arquivo{"# configuracao do servidor\r\n\r\n   # comentario indentado\r\nport=9002\r\n   root    =  "
+                            "  /com espaco/pasta   \r\n\t\n"};
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
+    EXPECT_EQ(r.config.port, 9002);
+    EXPECT_EQ(r.config.root, "/com espaco/pasta"); // o valor e o resto da linha, sem as pontas
+}
+
+TEST(ConfigArquivoTest, ArquivoVazioMantemOsPadroes) {
+    ArquivoDeConfig arquivo{""};
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
+    EXPECT_EQ(r.config.port, 8080);
+}
+
+TEST(ConfigArquivoTest, LinhaDeComandoVenceOArquivo) {
+    ArquivoDeConfig arquivo{"port = 9000\nroot = /do/arquivo\n"};
+
+    ConfigResult r = parse({"--config", arquivo.path(), "--port", "9100"});
+
+    ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
+    EXPECT_EQ(r.config.port, 9100);          // a linha de comando venceu
+    EXPECT_EQ(r.config.root, "/do/arquivo"); // o que ela nao mexeu vem do arquivo
+}
+
+TEST(ConfigArquivoTest, LinhaDeComandoVenceMesmoQuandoVemAntesDoConfig) {
+    ArquivoDeConfig arquivo{"port = 9000\n"};
+
+    ConfigResult r = parse({"--port", "9100", "--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::OK) << r.error;
+    EXPECT_EQ(r.config.port, 9100); // a ordem dos argumentos nao muda quem tem prioridade
+}
+
+TEST(ConfigArquivoTest, ChaveRepetidaNoArquivoValeAUltima) {
+    ArquivoDeConfig arquivo{"port = 9000\nport = 9003\n"};
+
+    EXPECT_EQ(parse({"--config", arquivo.path()}).config.port, 9003);
+}
+
+TEST(ConfigArquivoTest, ArquivoInexistenteDaErroCitandoOCaminho) {
+    espera_erro({"--config", "/nao/existe/citius.conf"}, "/nao/existe/citius.conf");
+}
+
+TEST(ConfigArquivoTest, ConfigSemValor) {
+    espera_erro({"--config"}, "falta o valor de --config");
+    espera_erro({"--config", "--port", "80"}, "falta o valor de --config");
+}
+
+TEST(ConfigArquivoTest, ErrosCitamArquivoELinha) {
+    ArquivoDeConfig arquivo{"port = 9000\nfoo = 1\n"};
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::INVALID);
+    EXPECT_NE(r.error.find(arquivo.path() + ":2:"), std::string::npos) << r.error;
+    EXPECT_NE(r.error.find("foo"), std::string::npos) << r.error;
+}
+
+TEST(ConfigArquivoTest, LinhaSemIgualDaErroNaLinhaCerta) {
+    ArquivoDeConfig arquivo{"# ok\nport = 9000\nlixo sem igual\n"};
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::INVALID);
+    EXPECT_NE(r.error.find(arquivo.path() + ":3:"), std::string::npos) << r.error;
+}
+
+TEST(ConfigArquivoTest, ValorInvalidoDaErroNaLinhaCerta) {
+    ArquivoDeConfig arquivo{"port = 9000\nmax-connections = muitas\n"};
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::INVALID);
+    EXPECT_NE(r.error.find(arquivo.path() + ":2:"), std::string::npos) << r.error;
+    EXPECT_NE(r.error.find("max-connections"), std::string::npos) << r.error;
+}
+
+TEST(ConfigArquivoTest, ChaveVaziaOuSoComIgualDaErro) {
+    ArquivoDeConfig arquivo{"= 9000\n"};
+
+    EXPECT_EQ(parse({"--config", arquivo.path()}).status, ParseStatus::INVALID);
+}
+
+TEST(ConfigArquivoTest, ConfigDentroDoArquivoNaoPode) {
+    ArquivoDeConfig arquivo{"config = /outro.conf\n"};
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::INVALID);
+    EXPECT_NE(r.error.find("config"), std::string::npos) << r.error; // evitaria laco e inclusoes encadeadas
+}
+
+TEST(ConfigArquivoTest, CaractereDeControleNaLinhaDaErro) {
+    ArquivoDeConfig arquivo{std::string("root = /pasta\x01ruim\n")};
+
+    EXPECT_EQ(parse({"--config", arquivo.path()}).status, ParseStatus::INVALID);
+}
+
+TEST(ConfigArquivoTest, ArquivoGrandeDemaisEhRecusado) {
+    ArquivoDeConfig arquivo{"# " + std::string(70 * 1024, 'x') + "\n"}; // 70 KB: acima do limite de 64 KB
+
+    ConfigResult r = parse({"--config", arquivo.path()});
+
+    ASSERT_EQ(r.status, ParseStatus::INVALID);
+    EXPECT_NE(r.error.find("grande demais"), std::string::npos) << r.error;
+}
+
+TEST(ConfigArquivoTest, HelpFuncionaMesmoComConfigQuebrado) {
+    // o arquivo so e lido depois de varrer a linha de comando: --help nunca fica escondido por um erro de arquivo
+    ConfigResult r = parse({"--config", "/nao/existe.conf", "--help"});
+
+    EXPECT_EQ(r.status, ParseStatus::HELP);
+}
+
+TEST(ConfigArquivoTest, ErroNaLinhaDeComandoApareceAntesDoArquivo) {
+    espera_erro({"--port", "abc", "--config", "/nao/existe.conf"}, "--port");
+}
+
+TEST(ConfigArquivoTest, UsoCitaConfigELogEmArquivo) {
+    const std::string uso = citius::config_usage("citius_server");
+
+    for (const char* opcao : {"--config", "--log-file", "--log-max-bytes", "--log-keep"}) {
         EXPECT_NE(uso.find(opcao), std::string::npos) << opcao;
     }
 }

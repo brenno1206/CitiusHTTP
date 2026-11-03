@@ -75,14 +75,15 @@ int run(int argc, char** argv) {
     std::vector<std::string_view> args;
     if (argc > 1) args.assign(argv + 1, argv + argc);
 
-    // saida do operador (ajuda/erro de uso) vai direto ao terminal: o Logger ainda nao foi configurado
     citius::ConfigResult const parsed = citius::parse_config(args);
     if (parsed.status == citius::ParseStatus::HELP) {
+        // o texto de ajuda e a SAIDA do programa (nao um log): vai para o stdout, sem hora nem nivel
         std::cout << citius::config_usage(program);
         return 0;
     }
     if (parsed.status == citius::ParseStatus::INVALID) {
-        std::cerr << "Erro: " << parsed.error << "\nUse --help para ver as opcoes.\n";
+        // o Logger ainda esta no padrao (console, nivel INFO): um ERROR sai no stderr, como todo erro do servidor
+        citius::log_error(std::format("{} (use --help para ver as opcoes)", parsed.error));
         return 2; // 2 = uso incorreto da linha de comando; 1 fica para falhas em execucao
     }
     const citius::Config& config = parsed.config;
@@ -90,6 +91,10 @@ int run(int argc, char** argv) {
 
     // falhas de inicializacao (ex.: porta ocupada) viram mensagem clara e codigo de saida 1
     try {
+        if (config.log_file) {
+            // lanca se nao puder abrir o arquivo (pasta inexistente, sem permissao): falha de inicializacao, exit 1
+            citius::Logger::instance().log_to_file(*config.log_file, config.log_max_bytes, config.log_keep);
+        }
         raise_fd_limit(config.max_connections);
         citius::Server server{config.port, config.root, config.max_connections};
         server.set_read_timeout(config.read_timeout);
@@ -115,7 +120,8 @@ int run(int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
-    // Rede de seguranca: excecao escapando de main chamaria std::terminate sem nenhuma mensagem
+    // Rede de seguranca: excecao escapando de main chamaria std::terminate sem nenhuma mensagem. Aqui o cerr e
+    // proposital: o proprio Logger pode ser o que falhou.
     try {
         return run(argc, argv);
     } catch (const std::exception& e) {
