@@ -1,5 +1,5 @@
 #pragma once
-#include "citius/net/Socket.hpp"
+#include "citius/util/FileDescriptor.hpp"
 #include <chrono>
 #include <vector>
 
@@ -54,7 +54,7 @@ public:
     [[nodiscard]] std::vector<PollEvent> wait(std::chrono::milliseconds timeout);
 
 private:
-    Socket m_handle; ///< dono do fd do kqueue/epoll (Socket aqui so significa "dono de um fd": fecha no destrutor)
+    FileDescriptor m_handle; ///< dono do fd do kqueue/epoll: fecha no destrutor
 };
 
 } // namespace citius

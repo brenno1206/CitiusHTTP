@@ -1,4 +1,5 @@
 #pragma once
+#include "citius/util/FileDescriptor.hpp"
 #include <chrono>
 #include <span>
 #include <string_view>
@@ -6,7 +7,7 @@
 
 namespace citius {
 
-/// Dono unico de um file descriptor de socket (RAII): fecha o fd no destrutor.
+/// Dono unico de um file descriptor de socket (RAII): fecha o fd no destrutor (compoe um FileDescriptor).
 ///
 /// Move-only: a copia e deletada para que dois objetos nunca fechem o mesmo fd.
 /// Os metodos de I/O sao bloqueantes e nao lancam excecoes; falhas sao devolvidas no retorno.
@@ -18,34 +19,38 @@ public:
     /// Assume a posse de @p fd (que sera fechado no destrutor). Use -1 para "sem fd".
     explicit Socket(int fd) noexcept : m_fd(fd) {}
 
-    ~Socket();
+    ~Socket() = default;
 
     Socket(const Socket&) = delete;
     Socket& operator=(const Socket&) = delete;
 
     /// Transfere a posse do fd de @p other, que fica invalido.
-    Socket(Socket&& other) noexcept;
+    Socket(Socket&& other) noexcept = default;
 
     /// Fecha o fd atual e transfere a posse do fd de @p other, que fica invalido.
-    Socket& operator=(Socket&& other) noexcept;
+    Socket& operator=(Socket&& other) noexcept = default;
 
     /// @return o fd cru (para chamadas POSIX). Nao feche nem guarde alem da vida do Socket.
     [[nodiscard]] int get() const noexcept {
-        return m_fd;
+        return m_fd.get();
     }
 
     /// @return true se ha um fd aberto sob posse deste objeto.
     [[nodiscard]] bool valid() const noexcept {
-        return m_fd >= 0;
+        return m_fd.valid();
     }
 
     /// Abre mao da posse sem fechar o fd.
     /// @return o fd; quem o receber passa a ser responsavel por fecha-lo.
-    [[nodiscard]] int release() noexcept;
+    [[nodiscard]] int release() noexcept {
+        return m_fd.release();
+    }
 
     /// Fecha o fd atual (se houver) e passa a guardar @p new_fd.
     /// Sem argumento, apenas fecha e deixa o Socket invalido.
-    void reset(int new_fd = -1) noexcept;
+    void reset(int new_fd = -1) noexcept {
+        m_fd.reset(new_fd);
+    }
 
     /// Liga SO_REUSEADDR: permite reusar a porta logo apos reiniciar o servidor
     /// (evita "Address already in use"). Deve ser chamado antes do bind().
@@ -92,7 +97,7 @@ public:
     [[nodiscard]] ssize_t recv_some(std::span<char> buffer) noexcept;
 
 private:
-    int m_fd = -1;
+    FileDescriptor m_fd;
 };
 
 } // namespace citius
